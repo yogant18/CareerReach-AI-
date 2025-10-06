@@ -10,11 +10,13 @@ Give it a company careers-page URL and it will:
 
 ## ✨ Example Use Case
 
-- **Nike** is hiring a *Principal Software Engineer* and investing time in hiring, onboarding, and training.  
-- **Atliq** (a software development company) can provide a dedicated engineer.  
-- Using **CareerReach AI**, Atliq’s BD executive (Mohan) generates a **personalized outreach email** to Nike—fast, targeted, and scalable.
+- **Siemens** is hiring a *Senior Machine Learning Engineer* and investing significant time in sourcing, interviews, and onboarding.
+- **TechNova**, an AI services firm, can allocate a dedicated ML engineer to accelerate Siemens’ roadmap.
+- Using **CareerReach AI**, TechNova’s BD executive (Aisha) pastes Siemens’ careers-page URL, and the app:
+  - Extracts the ML Engineer job description,
+  - Retrieves matching case studies from TechNova’s portfolio via the vector DB,
+  - Generates a **personalized cold email** tailored to Siemens’ role—fast, targeted, and scalable.
 
----
 
 
 ## Set-up
