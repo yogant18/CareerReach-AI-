@@ -1,6 +1,11 @@
 # 🚀 CareerReach AI
 
-**CareerReach AI** is an AI-powered B2B cold outreach platform and interactive sales advisor built with **Groq (Llama 3.3)**, **LangChain**, **ChromaDB**, and **Streamlit**.
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://careerreach-ai.streamlit.app/)
+[![Live Demo](https://img.shields.io/badge/Live_Demo-careerreach--ai.streamlit.app-brightgreen?style=for-the-badge&logo=streamlit)](https://careerreach-ai.streamlit.app/)
+
+> 🌐 **Live Demo**: [https://careerreach-ai.streamlit.app/](https://careerreach-ai.streamlit.app/)
+
+**CareerReach AI** is an AI-powered B2B cold outreach platform and interactive sales advisor built with **Groq**, **LangChain**, **ChromaDB**, and **Streamlit**.
 
 It extracts job postings directly from company career page URLs (or manual descriptions), matches relevant company portfolio case studies from a vector database, writes personalized cold emails, and features a built-in **Interactive AI Chatbot** for strategic outreach guidance.
 

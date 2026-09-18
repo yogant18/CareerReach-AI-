@@ -1,5 +1,7 @@
 # 🌐 Live Deployment Guide: CareerReach AI
 
+> 🚀 **Official Live App**: [https://careerreach-ai.streamlit.app/](https://careerreach-ai.streamlit.app/)
+
 You can host **CareerReach AI** live on the web for free using any of the following platforms.
 
 ---
