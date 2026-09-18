@@ -95,43 +95,8 @@ if "chat_history" not in st.session_state:
 
 # Sidebar Configurations
 with st.sidebar:
-    st.title("⚙️ Configuration")
+    st.title("⚙️ Settings")
     
-    # Check if a key is securely configured on the server/environment or secrets
-    server_key = ""
-    try:
-        if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
-            server_key = str(st.secrets["GROQ_API_KEY"]).strip()
-    except Exception:
-        pass
-    if not server_key:
-        server_key = os.getenv("GROQ_API_KEY", "").strip()
-
-    user_custom_key = ""
-    if server_key and server_key != "DEMO_MODE":
-        st.success("🔒 **Groq API Key Active**")
-        st.caption("Securely loaded from server secrets / environment. Key is protected and hidden from viewers.")
-        with st.expander("🔑 Override with Custom Key (Optional)"):
-            user_custom_key = st.text_input(
-                "Enter your personal Groq key",
-                value="",
-                type="password",
-                placeholder="Leave blank to use server key",
-                help="Only enter if you wish to use your own Groq API key instead of the server key."
-            )
-    else:
-        st.info("🟢 **Enter API Key or Use Demo Mode**")
-        user_custom_key = st.text_input(
-            "Groq API Key",
-            value="",
-            type="password",
-            placeholder="gsk_... (or leave blank for Demo Mode)",
-            help="Get your free API key at https://console.groq.com/keys"
-        )
-        if not user_custom_key.strip():
-            st.caption("No key entered. The app will run in **Demo Mode**.")
-
-    st.markdown("---")
     st.subheader("🧠 Model & Creativity")
     selected_model = st.selectbox(
         "Groq Model",
@@ -173,13 +138,19 @@ with st.sidebar:
         st.success("Vector store refreshed!")
 
 
-# Helper function to get chain
+# Helper function to get chain (silently reads server secrets / environment)
 def get_chain():
-    active_key = user_custom_key.strip() if user_custom_key.strip() else server_key
-    if not active_key:
-        active_key = "DEMO_MODE"
+    key = ""
     try:
-        return Chain(api_key=active_key, model_name=selected_model, temperature=temperature)
+        if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
+            key = str(st.secrets["GROQ_API_KEY"]).strip()
+    except Exception:
+        pass
+    if not key:
+        key = os.getenv("GROQ_API_KEY", "DEMO_MODE").strip()
+
+    try:
+        return Chain(api_key=key, model_name=selected_model, temperature=temperature)
     except Exception as e:
         st.error(f"Error initializing Groq LLM: {e}")
         return None
