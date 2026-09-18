@@ -97,20 +97,39 @@ if "chat_history" not in st.session_state:
 with st.sidebar:
     st.title("⚙️ Configuration")
     
-    env_groq_key = os.getenv("GROQ_API_KEY", "DEMO_MODE")
-    api_key_input = st.text_input(
-        "Groq API Key",
-        value=env_groq_key,
-        type="password",
-        help="Paste your Groq API key (starts with gsk_...) or use DEMO_MODE to test immediately without a key."
-    )
-    
-    is_live = bool(api_key_input and api_key_input.strip().startswith("gsk_"))
-    if is_live:
-        st.success("⚡ **Live Groq LLM Active**")
+    # Check if a key is securely configured on the server/environment or secrets
+    server_key = ""
+    try:
+        if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
+            server_key = str(st.secrets["GROQ_API_KEY"]).strip()
+    except Exception:
+        pass
+    if not server_key:
+        server_key = os.getenv("GROQ_API_KEY", "").strip()
+
+    user_custom_key = ""
+    if server_key and server_key != "DEMO_MODE":
+        st.success("🔒 **Groq API Key Active**")
+        st.caption("Securely loaded from server secrets / environment. Key is protected and hidden from viewers.")
+        with st.expander("🔑 Override with Custom Key (Optional)"):
+            user_custom_key = st.text_input(
+                "Enter your personal Groq key",
+                value="",
+                type="password",
+                placeholder="Leave blank to use server key",
+                help="Only enter if you wish to use your own Groq API key instead of the server key."
+            )
     else:
-        st.info("🟢 **Demo Mode Active** (Instant responses, no API key needed)")
-        st.caption("To use live Groq Llama 3.3, get a free key at [console.groq.com/keys](https://console.groq.com/keys)")
+        st.info("🟢 **Enter API Key or Use Demo Mode**")
+        user_custom_key = st.text_input(
+            "Groq API Key",
+            value="",
+            type="password",
+            placeholder="gsk_... (or leave blank for Demo Mode)",
+            help="Get your free API key at https://console.groq.com/keys"
+        )
+        if not user_custom_key.strip():
+            st.caption("No key entered. The app will run in **Demo Mode**.")
 
     st.markdown("---")
     st.subheader("🧠 Model & Creativity")
@@ -156,11 +175,11 @@ with st.sidebar:
 
 # Helper function to get chain
 def get_chain():
-    key = api_key_input.strip() or os.getenv("GROQ_API_KEY", "").strip()
-    if not key:
-        return None
+    active_key = user_custom_key.strip() if user_custom_key.strip() else server_key
+    if not active_key:
+        active_key = "DEMO_MODE"
     try:
-        return Chain(api_key=key, model_name=selected_model, temperature=temperature)
+        return Chain(api_key=active_key, model_name=selected_model, temperature=temperature)
     except Exception as e:
         st.error(f"Error initializing Groq LLM: {e}")
         return None
