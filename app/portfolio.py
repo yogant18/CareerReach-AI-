@@ -85,24 +85,40 @@ class Portfolio:
             return []
 
     def get_all_portfolios(self) -> pd.DataFrame:
-        """Retrieves all indexed portfolios as a pandas DataFrame."""
+        """
+        Retrieves all indexed portfolios directly from ChromaDB.
+        Falls back to CSV if ChromaDB collection is empty.
+        """
+        data = self.collection.get()
+        documents = data.get("documents", [])
+        metadatas = data.get("metadatas", [])
+        if documents:
+            records = []
+            for doc, meta in zip(documents, metadatas):
+                records.append({
+                    "Techstack": doc,
+                    "Links": (meta or {}).get("links", "")
+                })
+            return pd.DataFrame(records)
+
         if os.path.exists(self.file_path):
             return pd.read_csv(self.file_path)
-        data = self.collection.get()
-        records = []
-        for doc, meta in zip(data.get("documents", []), data.get("metadatas", [])):
-            records.append({
-                "Techstack": doc,
-                "Links": meta.get("links", "")
-            })
-        return pd.DataFrame(records)
+        return pd.DataFrame(columns=["Techstack", "Links"])
 
     def add_portfolio(self, techstack: str, links: str) -> bool:
-        """Adds a new techstack and link entry to both ChromaDB and CSV."""
+        """
+        Adds a new techstack and link entry to both ChromaDB and CSV.
+        Rejects links not starting with http:// or https://.
+        Raises an exception or returns False if CSV saving fails.
+        """
         techstack = techstack.strip()
         links = links.strip()
         if not techstack or not links:
             return False
+
+        # item 12: Validate URL scheme
+        if not (links.startswith("http://") or links.startswith("https://")):
+            raise ValueError("Portfolio link must start with http:// or https://")
 
         self.collection.add(
             documents=[techstack],
@@ -110,14 +126,21 @@ class Portfolio:
             ids=[str(uuid.uuid4())]
         )
 
-        # Update CSV if exists
+        # Update CSV (item 14: propagate error on failure)
         try:
             if os.path.exists(self.file_path):
                 df = pd.read_csv(self.file_path)
                 new_row = pd.DataFrame([{"Techstack": techstack, "Links": links}])
                 df = pd.concat([df, new_row], ignore_index=True)
                 df.to_csv(self.file_path, index=False)
+            else:
+                # File path specified does not exist or cannot be written
+                parent = os.path.dirname(self.file_path)
+                if parent and not os.path.exists(parent):
+                    raise IOError(f"Directory for CSV file does not exist: {parent}")
+                df = pd.DataFrame([{"Techstack": techstack, "Links": links}])
+                df.to_csv(self.file_path, index=False)
         except Exception as e:
-            print(f"Error saving to CSV: {e}")
-            
+            raise IOError(f"Added to ChromaDB, but failed to save to CSV file: {e}") from e
+
         return True

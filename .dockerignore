@@ -1,0 +1,11 @@
+.git
+.env
+app/.env
+vectorstore/
+__pycache__/
+notebooks/
+*.pyc
+*.pyo
+*.pyd
+.venv
+env/

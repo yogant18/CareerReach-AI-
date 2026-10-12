@@ -9,6 +9,7 @@ root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
+import html
 from app.chains import Chain
 from app.portfolio import Portfolio
 from app.utils import clean_text, scrape_website
@@ -16,6 +17,13 @@ from app.utils import clean_text, scrape_website
 # Load environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 load_dotenv(os.path.join(root_dir, ".env"))
+
+
+@st.cache_resource
+def get_portfolio_resource():
+    csv_path = os.path.join(root_dir, "my_portfolio.csv")
+    vector_path = os.path.join(root_dir, "vectorstore")
+    return Portfolio(file_path=csv_path, vectorstore_path=vector_path)
 
 # ---------------------------------------------------------------------------
 # Startup key presence check — prints "Groq key: found" or "Groq key: missing"
@@ -101,9 +109,7 @@ st.markdown("""
 
 # Initialize Session State
 if "portfolio_instance" not in st.session_state:
-    csv_path = os.path.join(root_dir, "my_portfolio.csv")
-    vector_path = os.path.join(root_dir, "vectorstore")
-    st.session_state.portfolio_instance = Portfolio(file_path=csv_path, vectorstore_path=vector_path)
+    st.session_state.portfolio_instance = get_portfolio_resource()
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
@@ -131,8 +137,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("👤 Sender Profile")
-    sender_name = st.text_input("Your / Sender Name", value="Mohan")
-    company_name = st.text_input("Your Company", value="AtliQ")
+    sender_name = st.text_input("Your / Sender Name", value="", placeholder="e.g. Alex Johnson")
+    company_name = st.text_input("Your Company", value="", placeholder="e.g. Acme AI Consulting")
     sender_role = st.text_input("Your Role", value="Business Development Executive")
     email_tone = st.selectbox(
         "Email Tone",
@@ -288,59 +294,62 @@ with tab_email:
 
     # Processing Generation
     if run_generation and scraped_content:
-        chain = get_chain()
-        if not chain:
-            st.error("⚠️ Please configure a valid Groq API Key in the sidebar to generate cold emails.")
+        if not sender_name.strip() or not company_name.strip():
+            st.error("⚠️ Please fill in both **Your / Sender Name** and **Your Company** in the sidebar before generating emails.")
         else:
-            with st.spinner("Analyzing job requirements and matching portfolio case studies..."):
-                try:
-                    jobs = chain.extract_jobs(scraped_content)
+            chain = get_chain()
+            if not chain:
+                st.error("⚠️ Please configure a valid Groq API Key in the sidebar to generate cold emails.")
+            else:
+                with st.spinner("Analyzing job requirements and matching portfolio case studies..."):
+                    try:
+                        jobs = chain.extract_jobs(scraped_content)
 
-                    # item 3 — show fallback notice and real error when AI step failed
-                    fallback_note = getattr(chain, "fallback_notice", None)
-                    err_note = getattr(chain, "last_error", None)
-                    is_demo = getattr(chain, "is_demo_mode", False)
-                    if fallback_note:
-                        st.info(f"ℹ️ {fallback_note}")
-                    if err_note and not is_demo:
-                        st.warning(
-                            f"⚠️ AI extraction failed and built-in parser was used.  \n"
-                            f"**Error:** `{err_note}`"
-                        )
-
-                    if not jobs:
-                        st.warning("No specific job roles could be identified in the text. Try refining the input.")
-                    else:
-                        # item 7 — cap at 3 jobs
-                        total_found = len(jobs)
-                        if total_found > 3:
-                            st.info(
-                                f"📋 **{total_found} job roles found** — showing the first 3. "
-                                f"Paste a more specific job description to target individual roles."
+                        # item 3 — show fallback notice and real error when AI step failed
+                        fallback_note = getattr(chain, "fallback_notice", None)
+                        err_note = getattr(chain, "last_error", None)
+                        is_demo = getattr(chain, "is_demo_mode", False)
+                        if fallback_note:
+                            st.info(f"ℹ️ {fallback_note}")
+                        if err_note and not is_demo:
+                            st.warning(
+                                f"⚠️ AI extraction failed and built-in parser was used.  \n"
+                                f"**Error:** `{err_note}`"
                             )
-                            jobs = jobs[:3]
 
-                        st.success(f"Successfully identified {len(jobs)} job role(s)!")
+                        if not jobs:
+                            st.warning("No specific job roles could be identified in the text. Try refining the input.")
+                        else:
+                            # item 7 — cap at 3 jobs
+                            total_found = len(jobs)
+                            if total_found > 3:
+                                st.info(
+                                    f"📋 **{total_found} job roles found** — showing the first 3. "
+                                    f"Paste a more specific job description to target individual roles."
+                                )
+                                jobs = jobs[:3]
 
-                        for idx, job in enumerate(jobs, 1):
-                            role = job.get("role", f"Role #{idx}")
-                            experience = job.get("experience", "Not specified")
-                            skills = job.get("skills", [])
-                            desc = job.get("description", "")
+                            st.success(f"Successfully identified {len(jobs)} job role(s)!")
 
-                            st.markdown(f"#### 📌 Job #{idx}: **{role}**")
-                            
-                            col_meta1, col_meta2 = st.columns([1, 2])
-                            with col_meta1:
-                                st.markdown(f"**Experience:** {experience}")
-                                st.markdown(f"**Summary:** {desc[:250]}..." if len(desc) > 250 else f"**Summary:** {desc}")
-                            with col_meta2:
-                                st.markdown("**Detected Skills:**")
-                                if skills:
-                                    skill_badges = "".join([f'<span class="badge-skill">{s}</span>' for s in skills])
-                                    st.markdown(skill_badges, unsafe_allow_html=True)
-                                else:
-                                    st.write("None detected.")
+                            for idx, job in enumerate(jobs, 1):
+                                role = job.get("role", f"Role #{idx}")
+                                experience = job.get("experience", "Not specified")
+                                skills = job.get("skills", [])
+                                desc = job.get("description", "")
+
+                                st.markdown(f"#### 📌 Job #{idx}: **{role}**")
+                                
+                                col_meta1, col_meta2 = st.columns([1, 2])
+                                with col_meta1:
+                                    st.markdown(f"**Experience:** {experience}")
+                                    st.markdown(f"**Summary:** {desc[:250]}..." if len(desc) > 250 else f"**Summary:** {desc}")
+                                with col_meta2:
+                                    st.markdown("**Detected Skills:**")
+                                    if skills:
+                                        skill_badges = "".join([f'<span class="badge-skill">{html.escape(str(s))}</span>' for s in skills])
+                                        st.markdown(skill_badges, unsafe_allow_html=True)
+                                    else:
+                                        st.write("None detected.")
 
                             # Retrieve matching portfolio links for cold email generation
                             portfolio = st.session_state.portfolio_instance
@@ -402,8 +411,8 @@ with tab_email:
                                     )
                             st.markdown("---")
 
-                except Exception as err:
-                    st.error(f"Error generating email: {str(err)}")
+                    except Exception as err:
+                        st.error(f"Error generating email: {str(err)}")
 
 
 # ==========================================
@@ -526,7 +535,7 @@ with tab_portfolio:
         st.subheader("📚 Current Indexed Portfolios")
         portfolio = st.session_state.portfolio_instance
         df_port = portfolio.get_all_portfolios()
-        st.dataframe(df_port, use_container_width=True, hide_index=True)
+        st.dataframe(df_port, hide_index=True)
 
         st.markdown("---")
         st.subheader("🔍 Test Semantic Search")
@@ -547,16 +556,21 @@ with tab_portfolio:
         st.subheader("➕ Add New Portfolio Item")
         with st.form("add_portfolio_form"):
             new_techstack = st.text_input("Techstack / Skills (e.g. Next.js, Tailwind, Supabase)")
-            new_link = st.text_input("Portfolio / Case Study URL", placeholder="https://example.com/nextjs-portfolio")
+            new_link = st.text_input("Portfolio / Case Study URL", placeholder="https://github.com/your-username/repo")
             submitted = st.form_submit_button("Add to Database", type="primary")
 
             if submitted:
                 if not new_techstack.strip() or not new_link.strip():
                     st.warning("Please fill in both Techstack and Link fields.")
                 else:
-                    success = portfolio.add_portfolio(new_techstack, new_link)
-                    if success:
-                        st.success(f"Added '{new_techstack}' to portfolio!")
-                        st.rerun()
-                    else:
-                        st.error("Failed to add portfolio.")
+                    try:
+                        success = portfolio.add_portfolio(new_techstack, new_link)
+                        if success:
+                            st.success(f"Added '{new_techstack}' to portfolio!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to add portfolio.")
+                    except ValueError as val_err:
+                        st.warning(f"⚠️ Validation error: {val_err}")
+                    except Exception as err:
+                        st.error(f"❌ Error saving portfolio: {err}")

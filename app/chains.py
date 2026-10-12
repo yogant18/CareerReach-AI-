@@ -13,12 +13,28 @@ logger = logging.getLogger(__name__)
 _FALLBACK_MODEL = "openai/gpt-oss-120b"
 
 # Models known to return <think>…</think> reasoning blocks (strip them always)
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_CLOSED_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_UNCLOSED_THINK_RE = re.compile(r"<think>.*$", re.DOTALL | re.IGNORECASE)
+_STRAY_THINK_RE = re.compile(r"</think>", re.IGNORECASE)
 
 
 def _strip_think(text: str) -> str:
-    """Remove <think>…</think> reasoning blocks from any LLM output."""
-    return _THINK_RE.sub("", text).strip()
+    """
+    Remove <think>…</think> reasoning blocks from any LLM output.
+    Handles:
+    - Closed tags: <think>...</think>
+    - Unclosed tags: <think>... (strips <think> and everything after)
+    - Stray closing tags: </think>
+    """
+    if not text:
+        return ""
+    # 1. Remove closed <think>...</think> blocks
+    cleaned = _CLOSED_THINK_RE.sub("", text)
+    # 2. Remove unclosed <think> and everything after it
+    cleaned = _UNCLOSED_THINK_RE.sub("", cleaned)
+    # 3. Remove stray </think> tags
+    cleaned = _STRAY_THINK_RE.sub("", cleaned)
+    return cleaned.strip()
 
 
 def _clean_email_markdown(text: str) -> str:
@@ -40,6 +56,17 @@ def _is_model_not_found(exc: Exception) -> bool:
     msg = str(exc).lower()
     return any(k in msg for k in ("model not found", "does not exist", "no such model",
                                    "invalid model", "404", "not_found"))
+
+
+def _clean_error_message(exc: Exception) -> str:
+    """
+    Sanitize exception message to ensure no API key, bearer tokens, or headers are included.
+    """
+    msg = str(exc)
+    # Remove any Authorization headers or bearer tokens if present
+    msg = re.sub(r"(?i)bearer\s+[A-Za-z0-9_\-\.]+", "Bearer [REDACTED]", msg)
+    msg = re.sub(r"gsk_[A-Za-z0-9]+", "[REDACTED]", msg)
+    return f"{type(exc).__name__}: {msg}"
 
 
 class Chain:
@@ -74,7 +101,7 @@ class Chain:
                 )
             except Exception as exc:
                 # item 1 — record error type + message, never the key
-                self.last_error = f"{type(exc).__name__}: {exc}"
+                self.last_error = _clean_error_message(exc)
                 logger.warning("Chain init failed — %s: %s", type(exc).__name__, exc)
                 self.is_demo_mode = True
 
@@ -84,32 +111,38 @@ class Chain:
     def _invoke_with_fallback(self, runnable, inputs: dict) -> Any:
         """
         Invoke a LangChain runnable. If the call fails because the model is not
-        found, rebuild with llama-3.3-70b-versatile and retry once.
-        Raises the original exception if retry also fails.
+        found, rebuild with openai/gpt-oss-120b and retry once.
+        If every fallback attempt fails, raises a RuntimeError naming ALL models tried.
         """
+        models_tried = [self.model_name]
         try:
             return runnable.invoke(inputs)
         except Exception as exc:
             if _is_model_not_found(exc) and self.model_name != _FALLBACK_MODEL:
+                models_tried.append(_FALLBACK_MODEL)
                 notice = (
                     f"Model **{self.model_name}** was not found on Groq. "
                     f"Retrying with **{_FALLBACK_MODEL}**."
                 )
                 self.fallback_notice = notice
                 logger.warning("Model not found (%s), retrying with %s", self.model_name, _FALLBACK_MODEL)
-                fallback_llm = ChatGroq(
-                    temperature=self.temperature,
-                    groq_api_key=self.api_key,
-                    model_name=_FALLBACK_MODEL
-                )
-                # Rebuild the runnable with the fallback LLM
-                # runnable is prompt | llm — replace the llm part
-                prompt_part = runnable.first if hasattr(runnable, "first") else None
-                if prompt_part is not None:
-                    return (prompt_part | fallback_llm).invoke(inputs)
-                # For direct llm invocations (list of messages)
-                return fallback_llm.invoke(inputs)
-            raise
+                try:
+                    fallback_llm = ChatGroq(
+                        temperature=self.temperature,
+                        groq_api_key=self.api_key,
+                        model_name=_FALLBACK_MODEL
+                    )
+                    prompt_part = runnable.first if hasattr(runnable, "first") else None
+                    if prompt_part is not None:
+                        return (prompt_part | fallback_llm).invoke(inputs)
+                    return fallback_llm.invoke(inputs)
+                except Exception as fallback_exc:
+                    err_clean = _clean_error_message(fallback_exc)
+                    models_str = ", ".join(models_tried)
+                    raise RuntimeError(f"Tried {models_str}: {err_clean}") from fallback_exc
+            err_clean = _clean_error_message(exc)
+            models_str = ", ".join(models_tried)
+            raise RuntimeError(f"Tried {models_str}: {err_clean}") from exc
 
     def extract_jobs(self, cleaned_text: str) -> List[Dict[str, Any]]:
         """
@@ -142,6 +175,8 @@ class Chain:
                 chain_extract = prompt_extract | self.llm
                 res = self._invoke_with_fallback(chain_extract, {"cleaned_text": cleaned_text})
                 raw = _strip_think(res.content)        # item 5
+                if not raw:
+                    raise ValueError("Model output was empty or contained only reasoning blocks after stripping <think> tags.")
                 json_parser = JsonOutputParser()
                 parsed = json_parser.parse(raw)
                 if isinstance(parsed, dict):
@@ -150,8 +185,8 @@ class Chain:
                     return parsed
             except Exception as exc:
                 # item 1 + 3 — store error for UI display
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("Groq extraction failed — %s: %s", type(exc).__name__, exc)
+                self.last_error = _clean_error_message(exc)
+                logger.warning("Groq extraction failed — %s", self.last_error)
 
         # Built-in Heuristic Extraction
         detected_skills = []
@@ -191,8 +226,8 @@ class Chain:
         self,
         job: Dict[str, Any],
         links: List[Dict[str, str]],
-        sender_name: str = "Mohan",
-        company_name: str = "AtliQ",
+        sender_name: str = "",
+        company_name: str = "",
         sender_role: str = "Business Development Executive",
         tone: str = "Professional & Persuasive",
         max_words: int = 150
@@ -270,11 +305,14 @@ class Chain:
                     "link_guidance": link_guidance
                 })
                 raw = _strip_think(res.content).strip()
-                return _clean_email_markdown(raw)
+                cleaned_mail = _clean_email_markdown(raw)
+                if not cleaned_mail:
+                    raise ValueError("Model output was empty or contained only reasoning blocks after stripping <think> tags.")
+                return cleaned_mail
             except Exception as exc:
                 # item 1 + 3
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("Groq email generation failed — %s: %s", type(exc).__name__, exc)
+                self.last_error = _clean_error_message(exc)
+                logger.warning("Groq email generation failed — %s", self.last_error)
 
         # Built-in High-Converting Cold Email Engine
         skills_formatted = ", ".join(skills[:3]) if skills else "modern software engineering and AI architectures"
@@ -342,11 +380,14 @@ Provide high-value, crisp, actionable advice with markdown formatting.
                     formatted_messages.append({"role": msg["role"], "content": msg["content"]})
 
                 res = self._invoke_with_fallback(self.llm, formatted_messages)
-                return _strip_think(res.content).strip()  # item 5
+                stripped_chat = _strip_think(res.content).strip()  # item 5
+                if not stripped_chat:
+                    raise ValueError("Model output was empty or contained only reasoning blocks after stripping <think> tags.")
+                return stripped_chat
             except Exception as exc:
                 # item 1 + 3
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("Groq chat failed — %s: %s", type(exc).__name__, exc)
+                self.last_error = _clean_error_message(exc)
+                logger.warning("Groq chat failed — %s", self.last_error)
 
         # Built-in Conversational Assistant Engine
         q_lower = last_user_query.lower()
