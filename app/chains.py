@@ -10,7 +10,7 @@ from langchain_core.exceptions import OutputParserException
 logger = logging.getLogger(__name__)
 
 # Fallback model used when the selected model is not found on Groq
-_FALLBACK_MODEL = "llama-3.3-70b-versatile"
+_FALLBACK_MODEL = "openai/gpt-oss-120b"
 
 # Models known to return <think>…</think> reasoning blocks (strip them always)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)

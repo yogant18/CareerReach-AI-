@@ -30,7 +30,7 @@ It extracts job postings directly from company career page URLs (or manual descr
   - Live search and interactive addition of new portfolio records.
 
 - ⚙️ **Customizable Sender Persona**:
-  - Customize sender name, company name, role, email tone, and Groq LLM model (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, etc.).
+  - Customize sender name, company name, role, email tone, and Groq LLM model (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `openai/gpt-oss-20b`).
 
 ---
 
