@@ -1,10 +1,45 @@
 import os
 import re
+import logging
 from typing import List, Dict, Any, Optional
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.exceptions import OutputParserException
+
+logger = logging.getLogger(__name__)
+
+# Fallback model used when the selected model is not found on Groq
+_FALLBACK_MODEL = "llama-3.3-70b-versatile"
+
+# Models known to return <think>…</think> reasoning blocks (strip them always)
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_think(text: str) -> str:
+    """Remove <think>…</think> reasoning blocks from any LLM output."""
+    return _THINK_RE.sub("", text).strip()
+
+
+def _clean_email_markdown(text: str) -> str:
+    """
+    Remove leftover markdown asterisks (**bold**, *italic*), bullets (* or -),
+    and markdown headings (#) from email text to guarantee clean plain text.
+    """
+    # Remove asterisks (e.g. **bold**, *bullet*, etc.)
+    cleaned = text.replace("*", "")
+    # Remove markdown heading hashes at beginning of lines (e.g. ### Subject -> Subject)
+    cleaned = re.sub(r"(?m)^[ \t]*#+[ \t]*", "", cleaned)
+    # Remove leftover bullet markers at beginning of lines (- or +)
+    cleaned = re.sub(r"(?m)^[ \t]*[-+][ \t]+", "", cleaned)
+    return cleaned.strip()
+
+
+def _is_model_not_found(exc: Exception) -> bool:
+    """Return True when the exception indicates the model ID is unknown."""
+    msg = str(exc).lower()
+    return any(k in msg for k in ("model not found", "does not exist", "no such model",
+                                   "invalid model", "404", "not_found"))
 
 
 class Chain:
@@ -17,8 +52,15 @@ class Chain:
         self.api_key = (api_key or os.getenv("GROQ_API_KEY", "")).strip()
         self.model_name = model_name
         self.temperature = temperature
-        self.is_demo_mode = (self.api_key.upper() == "DEMO" or self.api_key.upper() == "DEMO_MODE" or not self.api_key.startswith("gsk_"))
-        
+        self.last_error: Optional[str] = None          # item 1
+        self.fallback_notice: Optional[str] = None     # item 4 — surface in UI
+
+        self.is_demo_mode = (
+            self.api_key.upper() == "DEMO"
+            or self.api_key.upper() == "DEMO_MODE"
+            or not self.api_key.startswith("gsk_")
+        )
+
         self.llm = None
         if not self.is_demo_mode:
             try:
@@ -27,14 +69,53 @@ class Chain:
                     groq_api_key=self.api_key,
                     model_name=self.model_name
                 )
-            except Exception:
+            except Exception as exc:
+                # item 1 — record error type + message, never the key
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                logger.warning("Chain init failed — %s: %s", type(exc).__name__, exc)
                 self.is_demo_mode = True
+
+    # ------------------------------------------------------------------
+    # Internal: invoke LLM with automatic model-not-found retry (item 4)
+    # ------------------------------------------------------------------
+    def _invoke_with_fallback(self, runnable, inputs: dict) -> Any:
+        """
+        Invoke a LangChain runnable. If the call fails because the model is not
+        found, rebuild with llama-3.3-70b-versatile and retry once.
+        Raises the original exception if retry also fails.
+        """
+        try:
+            return runnable.invoke(inputs)
+        except Exception as exc:
+            if _is_model_not_found(exc) and self.model_name != _FALLBACK_MODEL:
+                notice = (
+                    f"Model **{self.model_name}** was not found on Groq. "
+                    f"Retrying with **{_FALLBACK_MODEL}**."
+                )
+                self.fallback_notice = notice
+                logger.warning("Model not found (%s), retrying with %s", self.model_name, _FALLBACK_MODEL)
+                fallback_llm = ChatGroq(
+                    temperature=self.temperature,
+                    groq_api_key=self.api_key,
+                    model_name=_FALLBACK_MODEL
+                )
+                # Rebuild the runnable with the fallback LLM
+                # runnable is prompt | llm — replace the llm part
+                prompt_part = runnable.first if hasattr(runnable, "first") else None
+                if prompt_part is not None:
+                    return (prompt_part | fallback_llm).invoke(inputs)
+                # For direct llm invocations (list of messages)
+                return fallback_llm.invoke(inputs)
+            raise
 
     def extract_jobs(self, cleaned_text: str) -> List[Dict[str, Any]]:
         """
         Extracts job postings from text into a list of job dicts.
         Uses Groq LLM if active, otherwise uses intelligent heuristic extraction.
         """
+        self.last_error = None
+        self.fallback_notice = None
+
         if not self.is_demo_mode and self.llm:
             try:
                 prompt_extract = PromptTemplate.from_template(
@@ -56,16 +137,18 @@ class Chain:
                     """
                 )
                 chain_extract = prompt_extract | self.llm
-                res = chain_extract.invoke(input={"cleaned_text": cleaned_text})
+                res = self._invoke_with_fallback(chain_extract, {"cleaned_text": cleaned_text})
+                raw = _strip_think(res.content)        # item 5
                 json_parser = JsonOutputParser()
-                parsed = json_parser.parse(res.content)
+                parsed = json_parser.parse(raw)
                 if isinstance(parsed, dict):
                     return [parsed]
                 elif isinstance(parsed, list):
                     return parsed
-            except Exception as e:
-                # If Groq call fails (e.g. rate limit / bad key), fallback smoothly
-                print(f"Groq extraction notice: {e}, falling back to built-in parser.")
+            except Exception as exc:
+                # item 1 + 3 — store error for UI display
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                logger.warning("Groq extraction failed — %s: %s", type(exc).__name__, exc)
 
         # Built-in Heuristic Extraction
         detected_skills = []
@@ -80,11 +163,18 @@ class Chain:
                 detected_skills.append(skill)
 
         # Estimate role
-        role_match = re.search(r"(?:for|role|title|position|hiring)\s+([A-Za-z\s/]{3,35}(?:Engineer|Developer|Architect|Scientist|Specialist|Manager))", cleaned_text, re.IGNORECASE)
+        role_match = re.search(
+            r"(?:for|role|title|position|hiring)\s+([A-Za-z\s/]{3,35}"
+            r"(?:Engineer|Developer|Architect|Scientist|Specialist|Manager))",
+            cleaned_text, re.IGNORECASE
+        )
         role = role_match.group(1).strip() if role_match else "Software & AI Specialist"
 
         # Estimate experience
-        exp_match = re.search(r"(\d+\+?\s*(?:-\s*\d+)?\s*(?:years|yrs)(?:\s+of)?\s+experience)", cleaned_text, re.IGNORECASE)
+        exp_match = re.search(
+            r"(\d+\+?\s*(?:-\s*\d+)?\s*(?:years|yrs)(?:\s+of)?\s+experience)",
+            cleaned_text, re.IGNORECASE
+        )
         experience = exp_match.group(1).strip() if exp_match else "2+ years of relevant experience"
 
         return [{
@@ -101,14 +191,33 @@ class Chain:
         sender_name: str = "Mohan",
         company_name: str = "AtliQ",
         sender_role: str = "Business Development Executive",
-        tone: str = "Professional & Persuasive"
+        tone: str = "Professional & Persuasive",
+        max_words: int = 150
     ) -> str:
         """
         Generates a personalized cold email tailored to the job description and portfolio links.
+        Supports max_words length options: Short (100), Standard (150), Full (300).
         """
+        self.last_error = None
+        self.fallback_notice = None
+
         role = job.get("role", "Software Role")
         skills = job.get("skills", [])
         desc = job.get("description", "")
+
+        # For Full length, allow up to 3 links; for Short/Standard, at most 1 link
+        link_limit = 3 if max_words >= 300 else 1
+        filtered_links = links[:link_limit] if links else []
+        para_guidance = (
+            "Format: a 'Subject:' line, a blank line, then up to 4 short paragraphs, then a sign-off."
+            if max_words >= 300
+            else "Format: a 'Subject:' line, a blank line, then 3 short paragraphs, then a sign-off."
+        )
+        link_guidance = (
+            f"Mention up to {link_limit} portfolio link(s) from {filtered_links}."
+            if filtered_links
+            else "No portfolio links available."
+        )
 
         if not self.is_demo_mode and self.llm:
             try:
@@ -126,55 +235,65 @@ class Chain:
                     ### RELEVANT PORTFOLIO LINKS:
                     {link_list}
 
+                    ### RULES:
+                    - Output plain text only. No markdown, no asterisks, no bullet lists, no bold.
+                    - {para_guidance}
+                    - Maximum {max_words} words.
+                    - One clear call to action.
+                    - Use only the provided portfolio links. Never invent clients, results or numbers.
+                    - {link_guidance} Incorporate in plain text sentences without bullet points.
+                    - No preamble, no conversational intro, no commentary.
+
                     ### INSTRUCTION:
                     You are {sender_name}, working as {sender_role} at {company_name}.
                     {company_name} is an elite AI & software consulting firm.
                     Write a high-converting cold email to the hiring manager for {job_role}.
-                    Incorporate proof of work from {link_list}. Tone: {tone}.
-                    Provide Subject line and clean body with no conversational preamble.
+                    Tone: {tone}.
+
                     ### COLD EMAIL:
                     """
                 )
                 chain_email = prompt_email | self.llm
-                res = chain_email.invoke({
+                res = self._invoke_with_fallback(chain_email, {
                     "job_details": str(job),
                     "job_role": role,
                     "sender_name": sender_name,
                     "company_name": company_name,
                     "sender_role": sender_role,
                     "tone": tone,
-                    "link_list": str(links)
+                    "link_list": str(filtered_links),
+                    "max_words": max_words,
+                    "para_guidance": para_guidance,
+                    "link_guidance": link_guidance
                 })
-                return res.content.strip()
-            except Exception as e:
-                print(f"Groq email generation notice: {e}, using demo engine.")
+                raw = _strip_think(res.content).strip()
+                return _clean_email_markdown(raw)
+            except Exception as exc:
+                # item 1 + 3
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                logger.warning("Groq email generation failed — %s: %s", type(exc).__name__, exc)
 
         # Built-in High-Converting Cold Email Engine
         skills_formatted = ", ".join(skills[:3]) if skills else "modern software engineering and AI architectures"
         links_text = ""
-        if links:
-            links_text = "\nHere are a few relevant case studies from our recent client engagements:\n"
-            for item in links[:2]:
-                url = item.get("links", "")
-                links_text += f"- Case Study: {url}\n"
+        if filtered_links:
+            links_text = f"\nYou can review our relevant proof of work here: {filtered_links[0].get('links', '')}\n"
 
         email = f"""Subject: Accelerating Your {role} Roadmap – {company_name} Capability Showcase
 
 Dear Hiring Team,
 
-I noticed your open position for {role} and the emphasis on {skills_formatted}. 
+I noticed your open position for {role} and the emphasis on {skills_formatted}.
 
 At {company_name}, we specialize in augmenting tech enterprises with dedicated engineers and delivery teams that integrate immediately into active codebases—reducing onboarding overhead and accelerating time-to-market.
 {links_text}
-Given your current roadmap, our senior engineers can jump in to solve key technical challenges in {skills_formatted} without the usual 3-month hiring latency.
-
 Would you be open to a brief 10-minute exploratory chat this Thursday to see if our capabilities align with your sprint goals?
 
 Warm regards,
 
 {sender_name}
 {sender_role} | {company_name}"""
-        return email
+        return _clean_email_markdown(email)
 
     def chat_response(
         self,
@@ -184,7 +303,11 @@ Warm regards,
     ) -> str:
         """
         Handles conversational chatbot requests.
+        Sends only the last 12 messages to the model (item 6).
         """
+        self.last_error = None
+        self.fallback_notice = None
+
         last_user_query = ""
         for m in reversed(messages):
             if m.get("role") == "user":
@@ -195,10 +318,13 @@ Warm regards,
             try:
                 profile_str = ""
                 if user_profile:
-                    profile_str = f"User Profile: Name: {user_profile.get('name')}, Company: {user_profile.get('company')}, Role: {user_profile.get('role')}."
+                    profile_str = (
+                        f"User Profile: Name: {user_profile.get('name')}, "
+                        f"Company: {user_profile.get('company')}, "
+                        f"Role: {user_profile.get('role')}."
+                    )
 
-                system_prompt = f"""
-You are the CareerReach AI Assistant — an expert AI advisor in B2B sales outreach, technical recruiting, and cold email strategies.
+                system_prompt = f"""You are the CareerReach AI Assistant — an expert AI advisor in B2B sales outreach, technical recruiting, and cold email strategies.
 {profile_str}
 
 Portfolio database context:
@@ -206,18 +332,22 @@ Portfolio database context:
 
 Provide high-value, crisp, actionable advice with markdown formatting.
 """
+                # item 6 — cap history to last 12 messages before prepending system
+                recent_messages = messages[-12:]
                 formatted_messages = [{"role": "system", "content": system_prompt}]
-                for msg in messages:
+                for msg in recent_messages:
                     formatted_messages.append({"role": msg["role"], "content": msg["content"]})
 
-                res = self.llm.invoke(formatted_messages)
-                return res.content.strip()
-            except Exception as e:
-                print(f"Groq chat notice: {e}, using demo engine.")
+                res = self._invoke_with_fallback(self.llm, formatted_messages)
+                return _strip_think(res.content).strip()  # item 5
+            except Exception as exc:
+                # item 1 + 3
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                logger.warning("Groq chat failed — %s: %s", type(exc).__name__, exc)
 
         # Built-in Conversational Assistant Engine
         q_lower = last_user_query.lower()
-        
+
         if "subject" in q_lower:
             return """### 🎯 5 High-Converting Cold Email Subject Lines:
 

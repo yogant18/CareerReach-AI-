@@ -17,6 +17,26 @@ from app.utils import clean_text, scrape_website
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 load_dotenv(os.path.join(root_dir, ".env"))
 
+# ---------------------------------------------------------------------------
+# Startup key presence check — prints "Groq key: found" or "Groq key: missing"
+# Never prints or logs the key value.
+# ---------------------------------------------------------------------------
+def _check_groq_key() -> None:
+    _key = ""
+    try:
+        if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
+            _key = str(st.secrets["GROQ_API_KEY"]).strip()
+    except Exception:
+        pass
+    if not _key:
+        _key = os.getenv("GROQ_API_KEY", "").strip()
+    if _key and _key.startswith("gsk_"):
+        print("Groq key: found", flush=True)
+    else:
+        print("Groq key: missing", flush=True)
+
+_check_groq_key()
+
 # Streamlit Page Config
 st.set_page_config(
     page_title="CareerReach AI | Cold Email & AI Outreach",
@@ -127,6 +147,21 @@ with st.sidebar:
         ],
         index=0
     )
+    email_length_option = st.selectbox(
+        "Email Length",
+        options=[
+            "Short (max 100 words)",
+            "Standard (max 150 words)",
+            "Full (max 300 words)"
+        ],
+        index=1
+    )
+    length_limits = {
+        "Short (max 100 words)": 100,
+        "Standard (max 150 words)": 150,
+        "Full (max 300 words)": 300
+    }
+    max_words_selected = length_limits.get(email_length_option, 150)
 
     st.markdown("---")
     # Vector store status
@@ -162,6 +197,16 @@ st.markdown(
     '<div class="sub-title">AI-Powered B2B Cold Outreach & Portfolio Matching with Interactive Conversational Assistant</div>',
     unsafe_allow_html=True
 )
+
+# item 2 — Demo-mode banner: shown once, before tabs, only when key is absent/invalid
+_probe_chain = get_chain()
+if _probe_chain and _probe_chain.is_demo_mode:
+    st.warning(
+        "⚠️ **Demo Mode — AI features are disabled.**  "
+        "No valid Groq API key was found. All outputs will use built-in templates.  "
+        "Add your key to `app/.env` (local) or Streamlit Secrets (cloud), then refresh.",
+        icon="🔑"
+    )
 
 # Tabs Navigation
 tab_email, tab_chat, tab_portfolio = st.tabs([
@@ -252,10 +297,28 @@ with tab_email:
             with st.spinner("Analyzing job requirements and matching portfolio case studies..."):
                 try:
                     jobs = chain.extract_jobs(scraped_content)
-                    
+
+                    # item 3 — show fallback notice and real error when AI step failed
+                    if chain.fallback_notice:
+                        st.info(f"ℹ️ {chain.fallback_notice}")
+                    if chain.last_error and not chain.is_demo_mode:
+                        st.warning(
+                            f"⚠️ AI extraction failed and built-in parser was used.  \n"
+                            f"**Error:** `{chain.last_error}`"
+                        )
+
                     if not jobs:
                         st.warning("No specific job roles could be identified in the text. Try refining the input.")
                     else:
+                        # item 7 — cap at 3 jobs
+                        total_found = len(jobs)
+                        if total_found > 3:
+                            st.info(
+                                f"📋 **{total_found} job roles found** — showing the first 3. "
+                                f"Paste a more specific job description to target individual roles."
+                            )
+                            jobs = jobs[:3]
+
                         st.success(f"Successfully identified {len(jobs)} job role(s)!")
 
                         for idx, job in enumerate(jobs, 1):
@@ -299,8 +362,18 @@ with tab_email:
                                     sender_name=sender_name,
                                     company_name=company_name,
                                     sender_role=sender_role,
-                                    tone=user_profile_tone
+                                    tone=user_profile_tone,
+                                    max_words=max_words_selected
                                 )
+
+                                # item 3 — show fallback/error info for write_mail step
+                                if chain.fallback_notice:
+                                    st.info(f"ℹ️ {chain.fallback_notice}")
+                                if chain.last_error and not chain.is_demo_mode:
+                                    st.warning(
+                                        f"⚠️ AI email generation failed; built-in template used.  \n"
+                                        f"**Error:** `{chain.last_error}`"
+                                    )
 
                                 st.markdown("##### ✉️ Generated Cold Email:")
                                 st.text_area(
@@ -309,6 +382,18 @@ with tab_email:
                                     height=320,
                                     key=f"email_{idx}"
                                 )
+
+                                # Word count display & threshold warning
+                                email_word_count = len(email_text.split())
+                                if email_word_count > max_words_selected:
+                                    st.warning(
+                                        f"⚠️ **Word Count:** {email_word_count} words "
+                                        f"(exceeds target limit of {max_words_selected} words)."
+                                    )
+                                else:
+                                    st.caption(
+                                        f"📏 **Word Count:** {email_word_count} / {max_words_selected} words (within limit)."
+                                    )
 
                                 col_copy, col_download = st.columns([1, 4])
                                 with col_copy:
@@ -398,6 +483,14 @@ with tab_chat:
                             portfolio_context=portfolio_summary,
                             user_profile=user_prof
                         )
+                        # item 3 — show fallback notice / real error beneath the response
+                        if chain.fallback_notice:
+                            st.info(f"ℹ️ {chain.fallback_notice}")
+                        if chain.last_error and not chain.is_demo_mode:
+                            st.warning(
+                                f"⚠️ AI call failed; built-in response used.  \n"
+                                f"**Error:** `{chain.last_error}`"
+                            )
                         st.markdown(response)
                         st.session_state.chat_history.append({"role": "assistant", "content": response})
                     except Exception as chat_err:
