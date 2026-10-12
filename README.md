@@ -98,3 +98,29 @@ You can host CareerReach AI live on the web for free:
 5. Click **Deploy**.
 
 For detailed instructions on deploying to **Hugging Face Spaces** or **Docker (Render/Railway)**, check [DEPLOYMENT.md](DEPLOYMENT.md).
+
+---
+
+## 🔑 API Keys — Security Rules
+
+> **Never hard-code a Groq API key (or any secret) in source code, notebooks, or config files that are committed to git.**
+
+### Where to put your key
+
+| Environment | Where to set it |
+|-------------|----------------|
+| **Local development** | `app/.env` — copy `app/.env.example` and fill in your real key. This file is gitignored. |
+| **Streamlit Cloud** | App Settings → **Secrets** (`.streamlit/secrets.toml` format). The file itself is gitignored. |
+| **Docker / Render / Railway** | Set `GROQ_API_KEY` as an environment variable in the platform's dashboard. |
+
+### What the codebase does to protect you
+
+- **`.gitignore`** excludes `app/.env`, `.env`, `.streamlit/secrets.toml`, and `vectorstore/`.
+- **`app/.env.example`** is the only file committed; it contains a placeholder, never a real key.
+- **A git pre-commit hook** (`.git/hooks/pre-commit`) scans every staged change for real `gsk_…` keys and **aborts the commit** if one is found.
+
+### If a key is accidentally exposed
+
+1. **Rotate it immediately** at [console.groq.com/keys](https://console.groq.com/keys) — the old key is compromised the moment it is pushed.
+2. Remove it from all files and replace with `os.environ["GROQ_API_KEY"]`.
+3. Scrub git history: `git filter-repo --path app/.env --invert-paths`.
