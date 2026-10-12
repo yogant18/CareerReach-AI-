@@ -12,6 +12,7 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 import streamlit.components.v1 as components
+from app.theme import apply_theme, hero, skeleton
 from app.chains import Chain
 from app.portfolio import Portfolio
 from app.utils import clean_text, scrape_website
@@ -56,411 +57,23 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------------------------------------------------------------------------
-# DESIGN SYSTEM: 4 THEMES (MONOCHROME: WHITE, BLACK, GREYS ONLY)
-# Paper: white page, light grey cards, black buttons
-# Ink: black page, charcoal cards, white buttons
-# Graphite: dark grey throughout
-# Split: light grey page with a black sidebar
-# ---------------------------------------------------------------------------
-THEMES = {
-    "Paper": {
-        "page_bg": "#FFFFFF",
-        "card_bg": "#F5F5F5",
-        "card_border": "#E5E5E5",
-        "text_primary": "#171717",
-        "text_muted": "#737373",
-        "sidebar_bg": "#FAFAFA",
-        "sidebar_border": "#E5E5E5",
-        "sidebar_text": "#171717",
-        "sidebar_muted": "#737373",
-        "btn_bg": "#000000",
-        "btn_text": "#FFFFFF",
-        "btn_hover": "#262626",
-        "input_bg": "#FFFFFF",
-        "input_border": "#D4D4D4",
-        "input_text": "#171717",
-        "shimmer_1": "#E5E5E5",
-        "shimmer_2": "#D4D4D4",
-    },
-    "Ink": {
-        "page_bg": "#0A0A0A",
-        "card_bg": "#171717",
-        "card_border": "#262626",
-        "text_primary": "#FAFAFA",
-        "text_muted": "#A3A3A3",
-        "sidebar_bg": "#0A0A0A",
-        "sidebar_border": "#262626",
-        "sidebar_text": "#FAFAFA",
-        "sidebar_muted": "#A3A3A3",
-        "btn_bg": "#FFFFFF",
-        "btn_text": "#0A0A0A",
-        "btn_hover": "#E5E5E5",
-        "input_bg": "#171717",
-        "input_border": "#262626",
-        "input_text": "#FAFAFA",
-        "shimmer_1": "#262626",
-        "shimmer_2": "#333333",
-    },
-    "Graphite": {
-        "page_bg": "#1E1E1E",
-        "card_bg": "#282828",
-        "card_border": "#383838",
-        "text_primary": "#EDEDED",
-        "text_muted": "#A0A0A0",
-        "sidebar_bg": "#181818",
-        "sidebar_border": "#333333",
-        "sidebar_text": "#EDEDED",
-        "sidebar_muted": "#A0A0A0",
-        "btn_bg": "#E0E0E0",
-        "btn_text": "#121212",
-        "btn_hover": "#CCCCCC",
-        "input_bg": "#242424",
-        "input_border": "#383838",
-        "input_text": "#EDEDED",
-        "shimmer_1": "#303030",
-        "shimmer_2": "#404040",
-    },
-    "Split": {
-        "page_bg": "#F5F5F5",
-        "card_bg": "#FFFFFF",
-        "card_border": "#E5E5E5",
-        "text_primary": "#171717",
-        "text_muted": "#737373",
-        "sidebar_bg": "#0A0A0A",
-        "sidebar_border": "#262626",
-        "sidebar_text": "#FAFAFA",
-        "sidebar_muted": "#A3A3A3",
-        "btn_bg": "#0A0A0A",
-        "btn_text": "#FFFFFF",
-        "btn_hover": "#262626",
-        "input_bg": "#FFFFFF",
-        "input_border": "#D4D4D4",
-        "input_text": "#171717",
-        "shimmer_1": "#E5E5E5",
-        "shimmer_2": "#D4D4D4",
-    }
-}
-
-# Theme selection in sidebar
-if "app_theme" not in st.session_state:
-    st.session_state["app_theme"] = "Paper"
-
-# Inject dynamic CSS based on active theme
-def inject_custom_css(theme_name: str):
-    t = THEMES.get(theme_name, THEMES["Paper"])
-    css = f"""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap');
-
-    /* Global Typography & Palette */
-    *, *::before, *::after {{
-        font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
-        box-sizing: border-box;
-    }}
-
-    :root {{
-        --bg-page: {t["page_bg"]};
-        --card-bg: {t["card_bg"]};
-        --card-border: {t["card_border"]};
-        --text-primary: {t["text_primary"]};
-        --text-muted: {t["text_muted"]};
-        --sidebar-bg: {t["sidebar_bg"]};
-        --sidebar-border: {t["sidebar_border"]};
-        --sidebar-text: {t["sidebar_text"]};
-        --sidebar-muted: {t["sidebar_muted"]};
-        --btn-bg: {t["btn_bg"]};
-        --btn-text: {t["btn_text"]};
-        --btn-hover: {t["btn_hover"]};
-        --input-bg: {t["input_bg"]};
-        --input-border: {t["input_border"]};
-        --input-text: {t["input_text"]};
-    }}
-
-    /* Base Body & App View */
-    .stApp, [data-testid="stAppViewContainer"] {{
-        background-color: var(--bg-page) !important;
-        color: var(--text-primary) !important;
-    }}
-
-    [data-testid="stHeader"] {{
-        background-color: var(--bg-page) !important;
-        border-bottom: 1px solid var(--card-border) !important;
-    }}
-
-    /* Sidebar Styling */
-    [data-testid="stSidebar"] {{
-        background-color: var(--sidebar-bg) !important;
-        border-right: 1px solid var(--sidebar-border) !important;
-    }}
-
-    [data-testid="stSidebar"] *, [data-testid="stSidebar"] p, [data-testid="stSidebar"] label, [data-testid="stSidebar"] span {{
-        color: var(--sidebar-text) !important;
-    }}
-
-    [data-testid="stSidebar"] hr {{
-        border-color: var(--sidebar-border) !important;
-    }}
-
-    /* Headings — large with tight spacing */
-    h1, h2, h3, h4, h5, h6 {{
-        color: var(--text-primary) !important;
-        font-weight: 700 !important;
-        letter-spacing: -0.03em !important;
-        line-height: 1.25 !important;
-    }}
-
-    /* Main Title with page-load fade motion */
-    @keyframes titleFadeIn {{
-        0% {{ opacity: 0; transform: translateY(6px); }}
-        100% {{ opacity: 1; transform: translateY(0); }}
-    }}
-
-    .main-title {{
-        font-size: 2.35rem !important;
-        font-weight: 800 !important;
-        letter-spacing: -0.04em !important;
-        color: var(--text-primary) !important;
-        margin-bottom: 0.25rem !important;
-        animation: titleFadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
-    }}
-
-    /* Body Text — 16px, line length under 80 characters */
-    p, .stMarkdown p, .sub-title {{
-        font-size: 16px !important;
-        line-height: 1.6 !important;
-        color: var(--text-primary) !important;
-        max-width: 78ch !important;
-    }}
-
-    .sub-title {{
-        color: var(--text-muted) !important;
-        font-size: 1.05rem !important;
-        margin-bottom: 1.5rem !important;
-        max-width: 75ch !important;
-    }}
-
-    /* Cards */
-    .feature-card {{
-        background-color: var(--card-bg) !important;
-        border: 1px solid var(--card-border) !important;
-        border-radius: 8px !important;
-        padding: 1.25rem !important;
-        margin-bottom: 1rem !important;
-        max-width: 80ch !important;
-    }}
-
-    /* Badges & Chips — strictly monochrome */
-    .badge-skill {{
-        display: inline-block;
-        background-color: var(--card-bg) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--card-border) !important;
-        font-weight: 600 !important;
-        font-size: 0.8rem !important;
-        padding: 4px 10px !important;
-        border-radius: 4px !important;
-        margin: 2px 4px 2px 0 !important;
-    }}
-
-    .quick-chip {{
-        display: inline-block;
-        background: var(--card-bg) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--card-border) !important;
-        padding: 7px 14px !important;
-        border-radius: 6px !important;
-        font-size: 0.85rem !important;
-        margin: 4px !important;
-        cursor: pointer;
-        transition: transform 0.15s ease, background-color 0.15s ease !important;
-    }}
-
-    .quick-chip:hover {{
-        transform: translateY(-2px) !important;
-        background: var(--card-border) !important;
-    }}
-
-    /* Buttons: Button lift on hover, monochrome colors */
-    button, .stButton > button, .stDownloadButton > button, [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"] {{
-        background-color: var(--btn-bg) !important;
-        color: var(--btn-text) !important;
-        border: 1px solid var(--btn-bg) !important;
-        border-radius: 6px !important;
-        font-weight: 600 !important;
-        font-size: 15px !important;
-        padding: 0.55rem 1.15rem !important;
-        cursor: pointer !important;
-        transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.16s ease, box-shadow 0.16s ease !important;
-    }}
-
-    button:hover, .stButton > button:hover, .stDownloadButton > button:hover, [data-testid="stBaseButton-secondary"]:hover, [data-testid="stBaseButton-primary"]:hover {{
-        transform: translateY(-2px) !important;
-        background-color: var(--btn-hover) !important;
-        border-color: var(--btn-hover) !important;
-        color: var(--btn-text) !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12) !important;
-    }}
-
-    button:active, .stButton > button:active, .stDownloadButton > button:active {{
-        transform: translateY(0) !important;
-    }}
-
-    /* Inputs, Textareas, Selectboxes — Smooth transitions */
-    input, textarea, select, [data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="select"] {{
-        background-color: var(--input-bg) !important;
-        color: var(--input-text) !important;
-        border: 1px solid var(--input-border) !important;
-        border-radius: 6px !important;
-        font-size: 15px !important;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease !important;
-    }}
-
-    input:focus, textarea:focus, select:focus {{
-        border-color: var(--text-primary) !important;
-        box-shadow: 0 0 0 1px var(--text-primary) !important;
-        outline: none !important;
-    }}
-
-    /* Tabs Styling & Smooth Transitions */
-    div[data-baseweb="tab-list"] {{
-        border-bottom: 1px solid var(--card-border) !important;
-        gap: 8px !important;
-    }}
-
-    button[data-baseweb="tab"] {{
-        background-color: transparent !important;
-        color: var(--text-muted) !important;
-        border: none !important;
-        border-bottom: 2px solid transparent !important;
-        border-radius: 0 !important;
-        font-weight: 600 !important;
-        font-size: 15px !important;
-        padding: 10px 16px !important;
-        transition: all 0.2s ease !important;
-    }}
-
-    button[data-baseweb="tab"]:hover {{
-        color: var(--text-primary) !important;
-        transform: none !important;
-        box-shadow: none !important;
-    }}
-
-    button[data-baseweb="tab"][aria-selected="true"] {{
-        color: var(--text-primary) !important;
-        border-bottom: 2px solid var(--text-primary) !important;
-    }}
-
-    /* Grey Shimmer animation while AI writes */
-    @keyframes greyShimmer {{
-        0% {{ background-position: -200% 0; }}
-        100% {{ background-position: 200% 0; }}
-    }}
-
-    .ai-shimmer {{
-        background: linear-gradient(90deg, {t["shimmer_1"]} 25%, {t["shimmer_2"]} 50%, {t["shimmer_1"]} 75%);
-        background-size: 200% 100%;
-        animation: greyShimmer 1.8s infinite linear;
-        border-radius: 6px;
-        padding: 10px 14px;
-        border: 1px solid var(--card-border);
-        color: var(--text-muted);
-        font-size: 14px;
-        margin: 8px 0;
-        max-width: 80ch;
-    }}
-
-    /* Monochrome Streamlit Alerts & Messages */
-    div[data-testid="stAlert"] {{
-        background-color: var(--card-bg) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--card-border) !important;
-        border-radius: 6px !important;
-        max-width: 80ch !important;
-    }}
-
-    div[data-testid="stAlert"] * {{
-        color: var(--text-primary) !important;
-    }}
-
-    /* Chat Messages */
-    [data-testid="stChatMessage"] {{
-        background-color: var(--card-bg) !important;
-        border: 1px solid var(--card-border) !important;
-        border-radius: 8px !important;
-        padding: 1rem !important;
-        margin-bottom: 0.75rem !important;
-        max-width: 80ch !important;
-    }}
-
-    /* Links: Monochrome underline */
-    a {{
-        color: var(--text-primary) !important;
-        text-decoration: underline !important;
-    }}
-
-    /* Respect prefers-reduced-motion */
-    @media (prefers-reduced-motion: reduce) {{
-        *, *::before, *::after {{
-            animation-duration: 0.001s !important;
-            animation-iteration-count: 1 !important;
-            transition-duration: 0.001s !important;
-            scroll-behavior: auto !important;
-            transform: none !important;
-        }}
-        .main-title {{
-            animation: none !important;
-        }}
-        .ai-shimmer {{
-            animation: none !important;
-        }}
-    }}
-
-    /* Mobile Width Optimization (~380px) */
-    @media (max-width: 480px) {{
-        .block-container {{
-            padding-left: 0.75rem !important;
-            padding-right: 0.75rem !important;
-            padding-top: 1.25rem !important;
-        }}
-        .main-title {{
-            font-size: 1.65rem !important;
-        }}
-        .sub-title {{
-            font-size: 0.92rem !important;
-        }}
-        button, .stButton > button, .stDownloadButton > button {{
-            width: 100% !important;
-            margin-bottom: 6px !important;
-        }}
-        p, .stMarkdown p {{
-            font-size: 15px !important;
-        }}
-    }}
-    </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
-
-
-# Render Copy button component (No emojis, monochrome theme)
-def render_copy_button(text_to_copy: str, key_suffix: str, label: str = "Copy Email"):
-    t = THEMES.get(st.session_state.get("app_theme", "Paper"), THEMES["Paper"])
+# Render Copy button component
+def render_copy_button(text_to_copy: str, key_suffix: str, label: str = "Copy"):
     safe_text = json.dumps(text_to_copy)
     btn_id = f"cp_{key_suffix}"
     
     html_code = f"""
-    <div style="margin-top: 4px; margin-bottom: 8px; font-family: 'Manrope', -apple-system, sans-serif;">
+    <div style="margin-top: 4px; margin-bottom: 8px;">
         <button id="{btn_id}" onclick="doCopy_{btn_id}()" style="
-            background-color: {t['btn_bg']};
-            color: {t['btn_text']};
-            border: 1px solid {t['card_border']};
-            border-radius: 6px;
-            padding: 8px 16px;
-            font-size: 14px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #E2E8F0;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            padding: 6px 14px;
+            font-size: 13px;
             font-weight: 600;
-            font-family: 'Manrope', -apple-system, sans-serif;
             cursor: pointer;
-            transition: transform 0.16s ease, background-color 0.16s ease;
+            transition: all 0.2s ease;
         ">{label}</button>
         <script>
             function doCopy_{btn_id}() {{
@@ -477,23 +90,15 @@ def render_copy_button(text_to_copy: str, key_suffix: str, label: str = "Copy Em
         </script>
     </div>
     """
-    components.html(html_code, height=48)
+    components.html(html_code, height=44)
 
+
+# Apply luxury dark theme
+apply_theme("Classic Dark")
 
 # Sidebar Configurations
 with st.sidebar:
     st.markdown("### Settings")
-
-    # Theme Switcher (Paper, Ink, Graphite, Split)
-    selected_theme = st.selectbox(
-        "Theme",
-        options=["Paper", "Ink", "Graphite", "Split"],
-        index=["Paper", "Ink", "Graphite", "Split"].index(st.session_state.get("app_theme", "Paper")),
-        key="theme_selector"
-    )
-    if selected_theme != st.session_state.get("app_theme"):
-        st.session_state["app_theme"] = selected_theme
-        st.rerun()
 
     st.markdown("---")
     st.markdown("### Model & Creativity")
@@ -513,6 +118,11 @@ with st.sidebar:
     sender_name = st.text_input("Your / Sender Name", value="", placeholder="Alex Johnson")
     company_name = st.text_input("Your Company", value="", placeholder="Acme AI Consulting")
     sender_role = st.text_input("Your Role", value="Business Development Executive")
+    portfolio_url = st.text_input(
+        "Your Portfolio / Website URL",
+        value="",
+        placeholder="https://youragency.com/work or https://github.com/username"
+    )
     email_tone = st.selectbox(
         "Email Tone",
         options=[
@@ -541,7 +151,8 @@ with st.sidebar:
 
     st.markdown("---")
     # Vector store status
-    if "portfolio_instance" not in st.session_state:
+    if "portfolio_instance" not in st.session_state or not hasattr(st.session_state.portfolio_instance, "load_from_dataframe"):
+        st.cache_resource.clear()
         st.session_state.portfolio_instance = get_portfolio_resource()
     portfolio = st.session_state.portfolio_instance
     doc_count = portfolio.collection.count()
@@ -551,8 +162,6 @@ with st.sidebar:
         st.success("Vector store refreshed.")
         st.rerun()
 
-# Apply CSS for chosen theme
-inject_custom_css(st.session_state["app_theme"])
 
 # Helper function to get chain (silently reads server secrets / environment)
 def get_chain():
@@ -572,12 +181,8 @@ def get_chain():
         return None
 
 
-# Top App Header (Manrope, large tight spacing, page-load fade motion, no emoji in title)
-st.markdown('<div class="main-title">CareerReach AI</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="sub-title">AI-powered B2B cold outreach & portfolio matching with conversational strategy assistant.</div>',
-    unsafe_allow_html=True
-)
+# Hero Header — Simpliflow-inspired hero
+hero("CareerReach AI", "AI-powered B2B cold outreach & portfolio matching")
 
 # Demo-mode banner: shown once, before tabs, only when key is absent/invalid
 _probe_chain = get_chain()
@@ -588,7 +193,7 @@ if _probe_chain and _probe_chain.is_demo_mode:
         "Add your key to app/.env (local) or Streamlit Secrets (cloud), then refresh."
     )
 
-# Tabs Navigation — no emoji in tabs
+# Tabs Navigation
 tab_email, tab_chat, tab_portfolio = st.tabs([
     "Cold Email Generator",
     "Interactive AI Chatbot",
@@ -638,7 +243,7 @@ with tab_email:
             if not url_input.strip():
                 st.warning("Please provide a valid URL.")
             else:
-                st.markdown('<div class="ai-shimmer">Scraping webpage and parsing job listings...</div>', unsafe_allow_html=True)
+                st.markdown(skeleton("Scraping webpage and parsing job listings..."), unsafe_allow_html=True)
                 with st.spinner("Processing..."):
                     try:
                         scraped_content = scrape_website(url_input.strip())
@@ -678,7 +283,7 @@ with tab_email:
             if not chain:
                 st.error("Please configure a valid Groq API Key to generate cold emails.")
             else:
-                st.markdown('<div class="ai-shimmer">Analyzing job requirements and matching portfolio case studies...</div>', unsafe_allow_html=True)
+                st.markdown(skeleton("Analyzing job requirements and matching portfolio case studies..."), unsafe_allow_html=True)
                 with st.spinner("Processing..."):
                     try:
                         jobs = chain.extract_jobs(scraped_content)
@@ -727,17 +332,17 @@ with tab_email:
                                 with col_meta2:
                                     st.markdown("**Detected Skills:**")
                                     if skills:
-                                        skill_badges = "".join([f'<span class="badge-skill">{html.escape(str(s))}</span>' for s in skills])
+                                        skill_badges = "".join([f'<span class="badge-glow">{html.escape(str(s))}</span>' for s in skills])
                                         st.markdown(skill_badges, unsafe_allow_html=True)
                                     else:
                                         st.write("None detected.")
 
                                 # Retrieve matching portfolio links for cold email generation
                                 portfolio = st.session_state.portfolio_instance
-                                matched_links = portfolio.query_links(skills)
+                                matched_links = portfolio.query_links(skills, base_portfolio_url=portfolio_url)
 
-                                # Generate Cold Email with Grey shimmer indicator
-                                st.markdown(f'<div class="ai-shimmer">Writing personalized outreach email for {role}...</div>', unsafe_allow_html=True)
+                                # Generate Cold Email with Skeleton indicator
+                                st.markdown(skeleton(f"Writing personalized outreach email for {role}..."), unsafe_allow_html=True)
                                 with st.spinner("Drafting..."):
                                     user_profile_tone = email_tone
                                     email_text = chain.write_mail(
@@ -819,7 +424,7 @@ with tab_chat:
             }
         ]
 
-    # Quick Action Prompt Chips (No emojis)
+    # Quick Action Prompt Chips
     st.markdown("**Quick Starters:**")
     quick_col1, quick_col2 = st.columns(2)
     
@@ -877,7 +482,7 @@ with tab_chat:
                 st.warning(error_msg)
         else:
             with st.chat_message("assistant"):
-                st.markdown('<div class="ai-shimmer">Formulating outreach strategy...</div>', unsafe_allow_html=True)
+                st.markdown(skeleton("Formulating outreach strategy..."), unsafe_allow_html=True)
                 with st.spinner("Thinking..."):
                     try:
                         portfolio_df = st.session_state.portfolio_instance.get_all_portfolios()
@@ -927,17 +532,105 @@ with tab_chat:
 with tab_portfolio:
     st.markdown("### Portfolio Vector Database")
     st.write(
-        "Browse indexed client case studies and tech stacks. "
-        "Query ChromaDB semantic search or register new case studies."
+        "Upload your own portfolio CSV (Techstack, Links) or use our Demo Agency Library. "
+        "When you upload your CSV, ChromaDB indexes your projects in real-time so your outreach emails quote your own real case studies."
     )
+
+    # -------------------------------------------------------------
+    # OPTION 2: Upload Custom Portfolio CSV or Use Demo Library
+    # -------------------------------------------------------------
+    st.markdown('<div class="glass-panel" style="margin-bottom: 24px;">', unsafe_allow_html=True)
+    st.markdown("#### 📂 Portfolio Source & Custom CSV Upload")
+    
+    col_upload, col_reset = st.columns([3, 1])
+    portfolio = st.session_state.get("portfolio_instance")
+    if portfolio is None or not hasattr(portfolio, "load_from_dataframe"):
+        st.cache_resource.clear()
+        portfolio = get_portfolio_resource()
+        st.session_state.portfolio_instance = portfolio
+    
+    with col_upload:
+        uploaded_csv = st.file_uploader(
+            "Upload your own portfolio CSV (Techstack, Links) or use our Demo Agency Library",
+            type=["csv"],
+            help="Upload a CSV with 'Techstack' and 'Links' headers. ChromaDB will index your case studies immediately."
+        )
+        if uploaded_csv is not None:
+            upload_id = f"{uploaded_csv.name}_{uploaded_csv.size}"
+            if st.session_state.get("current_portfolio_upload") != upload_id:
+                try:
+                    user_df = pd.read_csv(uploaded_csv)
+                    # Normalize column names
+                    col_map = {c: c.strip().capitalize() for c in user_df.columns}
+                    user_df.rename(columns=col_map, inplace=True)
+                    if "Techstack" in user_df.columns and "Links" in user_df.columns:
+                        portfolio.load_from_dataframe(user_df, force_reload=True)
+                        st.session_state["current_portfolio_upload"] = upload_id
+                        st.session_state["portfolio_source_label"] = f"Custom CSV: {uploaded_csv.name}"
+                        st.success(f"Indexed {len(user_df)} custom case studies from '{uploaded_csv.name}' into ChromaDB! Emails will now cite your own case studies.")
+                        st.rerun()
+                    else:
+                        st.error("Uploaded CSV must contain 'Techstack' and 'Links' columns.")
+                except Exception as e:
+                    st.error(f"Error reading uploaded CSV: {e}")
+
+    with col_reset:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Reset to Demo Library", help="Reload the standard enterprise case studies library"):
+            portfolio.load_portfolio(force_reload=True)
+            st.session_state["current_portfolio_upload"] = None
+            st.session_state["portfolio_source_label"] = "Demo Agency Library"
+            st.success("Reset back to Demo Agency Library!")
+            st.rerun()
+
+        # Download sample template
+        sample_csv = "Techstack,Links\n\"FastAPI, PostgreSQL, Docker\",https://example.com/case-studies/fintech-api\n\"React, Next.js, Stripe\",https://example.com/case-studies/ecommerce-platform\n\"PyTorch, LLMs, LangChain\",https://example.com/case-studies/ai-copilot\n"
+        st.download_button(
+            label="📥 Sample CSV Template",
+            data=sample_csv,
+            file_name="portfolio_template.csv",
+            mime="text/csv"
+        )
+
+    active_source = st.session_state.get("portfolio_source_label", "Demo Agency Library")
+    st.markdown(f'<div style="font-size: 0.85rem; color: #94A3B8; margin-top: 6px;">Active Library: <span class="badge-glow" style="margin-left: 6px;">{html.escape(active_source)}</span></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     col_view, col_add = st.columns([3, 2])
 
     with col_view:
         st.subheader("Current Indexed Portfolios")
-        portfolio = st.session_state.portfolio_instance
         df_port = portfolio.get_all_portfolios()
-        st.dataframe(df_port, hide_index=True)
+
+        # Minimalist Glassmorphism (Vercel) Cards instead of a glaring white table
+        if df_port is not None and not df_port.empty:
+            for _, row in df_port.iterrows():
+                tech = html.escape(str(row.get("Techstack", "")))
+                link = str(row.get("Links", ""))
+                card_html = f"""
+                <div class="portfolio-glass-card">
+                    <div>
+                        <div style="font-weight: 700; color: #F8FAFC; font-size: 0.95rem; margin-bottom: 4px;">{tech}</div>
+                        <a href="{link}" target="_blank" style="color: #A855F7; text-decoration: none; font-size: 0.82rem;">{link}</a>
+                    </div>
+                    <div>
+                        <a href="{link}" target="_blank" style="
+                            background: rgba(168, 85, 247, 0.15);
+                            color: #D8B4FE;
+                            border: 1px solid rgba(168, 85, 247, 0.3);
+                            padding: 6px 14px;
+                            border-radius: 8px;
+                            font-size: 0.8rem;
+                            font-weight: 600;
+                            text-decoration: none;
+                            display: inline-block;
+                        ">Open ↗</a>
+                    </div>
+                </div>
+                """
+                st.markdown(card_html, unsafe_allow_html=True)
+        else:
+            st.info("No portfolios currently indexed.")
 
         st.markdown("---")
         st.subheader("Test Semantic Search")
@@ -945,35 +638,69 @@ with tab_portfolio:
             "Enter skills or tech query (e.g. 'Kubernetes cloud deployment', 'iOS ARKit')",
             value="Machine Learning Python"
         )
-        if st.button("Search Vector DB"):
-            matches = portfolio.query_links(search_query, n_results=3)
+        if st.button("Search Vector DB", type="primary"):
+            st.session_state["search_matches"] = portfolio.query_links(
+                search_query, n_results=3, base_portfolio_url=portfolio_url
+            )
+            st.session_state["has_searched"] = True
+
+        matches = st.session_state.get("search_matches", [])
+        if st.session_state.get("has_searched"):
             if matches:
                 st.write("**Matching Links Found:**")
                 for i, m in enumerate(matches):
                     link_url = m.get('links', '')
-                    st.markdown(f"- [{link_url}]({link_url})")
-                    render_copy_button(link_url, key_suffix=f"link_{i}", label="Copy Link")
+                    match_html = f"""
+                    <div class="portfolio-glass-card" style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="flex: 1; margin-right: 12px; overflow: hidden;">
+                            <span style="color: #4ADE80; font-size: 0.85rem; font-weight: 600;">Match #{i+1}</span>
+                            <div style="margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                <a href="{link_url}" target="_blank" rel="noopener noreferrer" style="color: #A855F7; text-decoration: underline; font-size: 0.88rem; font-weight: 500;">{html.escape(link_url)}</a>
+                            </div>
+                        </div>
+                        <div>
+                            <a href="{link_url}" target="_blank" rel="noopener noreferrer" style="
+                                background: rgba(168, 85, 247, 0.2);
+                                color: #D8B4FE;
+                                border: 1px solid rgba(168, 85, 247, 0.4);
+                                padding: 6px 14px;
+                                border-radius: 8px;
+                                font-size: 0.82rem;
+                                font-weight: 600;
+                                text-decoration: none;
+                                display: inline-block;
+                            ">Open ↗</a>
+                        </div>
+                    </div>
+                    """
+                    st.markdown(match_html, unsafe_allow_html=True)
             else:
                 st.info("No matching portfolio entries found.")
-                # Empty state: one clear button
-                if st.button("Reset Search Query", key="empty_search_reset"):
-                    st.rerun()
 
     with col_add:
         st.subheader("Add Portfolio Item")
-        with st.form("add_portfolio_form"):
+        st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
+
+        # Show persistent success notice when an item is added
+        if st.session_state.get("add_portfolio_msg"):
+            st.success(st.session_state["add_portfolio_msg"])
+            st.session_state["add_portfolio_msg"] = None
+
+        with st.form("add_portfolio_form", clear_on_submit=True):
             new_techstack = st.text_input("Techstack / Skills (e.g. Next.js, FastAPI, PostgreSQL)")
-            new_link = st.text_input("Portfolio / Case Study URL", placeholder="https://github.com/your-username/repo")
+            new_link = st.text_input("Portfolio / Case Study URL", placeholder="https://example.com/case-studies/project")
             submitted = st.form_submit_button("Add to Database", type="primary")
 
             if submitted:
                 if not new_techstack.strip() or not new_link.strip():
                     st.warning("Please fill in both Techstack and Link fields.")
+                elif not (new_link.strip().startswith("http://") or new_link.strip().startswith("https://")):
+                    st.warning("Portfolio link must start with http:// or https://")
                 else:
                     try:
-                        success = portfolio.add_portfolio(new_techstack, new_link)
+                        success = portfolio.add_portfolio(new_techstack.strip(), new_link.strip())
                         if success:
-                            st.success(f"Added '{new_techstack}' to portfolio.")
+                            st.session_state["add_portfolio_msg"] = f"Successfully added '{new_techstack.strip()}' to portfolio database!"
                             st.rerun()
                         else:
                             st.error("Failed to add portfolio.")
@@ -981,3 +708,4 @@ with tab_portfolio:
                         st.warning(f"Validation error: {val_err}")
                     except Exception as err:
                         st.error(f"Error saving portfolio: {err}")
+        st.markdown('</div>', unsafe_allow_html=True)

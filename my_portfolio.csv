@@ -1,21 +1,22 @@
 Techstack,Links
-"React, Node.js, MongoDB",https://github.com/yogant18?tab=repositories&q=react
-"Angular, .NET, SQL Server",https://github.com/yogant18?tab=repositories&q=angular
-"Vue.js, Ruby on Rails, PostgreSQL",https://github.com/yogant18?tab=repositories&q=vue
-"Python, Django, MySQL, FastAPI",https://github.com/yogant18?tab=repositories&q=python
-"Java, Spring Boot, Oracle",https://github.com/yogant18?tab=repositories&q=java
-"Flutter, Firebase, GraphQL",https://github.com/yogant18?tab=repositories&q=flutter
-"WordPress, PHP, MySQL",https://github.com/yogant18?tab=repositories&q=wordpress
-"Magento, PHP, MySQL",https://github.com/yogant18?tab=repositories&q=magento
-"React Native, Node.js, MongoDB",https://github.com/yogant18?tab=repositories&q=react-native
-"iOS, Swift, Core Data",https://github.com/yogant18?tab=repositories&q=ios
-"Android, Java, Room Persistence",https://github.com/yogant18?tab=repositories&q=android
-"Kotlin, Android, Firebase",https://github.com/yogant18?tab=repositories&q=kotlin
-"Android TV, Kotlin, Android NDK",https://github.com/yogant18?tab=repositories&q=android-tv
-"iOS, Swift, ARKit",https://github.com/yogant18?tab=repositories&q=arkit
-"Cross-platform, Xamarin, Azure",https://github.com/yogant18?tab=repositories&q=xamarin
-"Backend, Kotlin, Spring Boot",https://github.com/yogant18?tab=repositories&q=backend
-"Frontend, TypeScript, Angular",https://github.com/yogant18?tab=repositories&q=typescript
-"Full-stack, JavaScript, Express.js",https://github.com/yogant18?tab=repositories&q=fullstack
-"Machine Learning, Python, TensorFlow, PyTorch",https://github.com/yogant18/CareerReach-AI-
-"DevOps, Jenkins, Docker, Kubernetes",https://github.com/yogant18?tab=repositories&q=devops
+"React, Node.js, MongoDB",https://example.com/case-studies/react-fullstack
+"Angular, .NET, SQL Server",https://example.com/case-studies/enterprise-dotnet
+"Vue.js, Ruby on Rails, PostgreSQL",https://example.com/case-studies/vue-rails-platform
+"Python, Django, MySQL, FastAPI",https://example.com/case-studies/fastapi-microservices
+"Java, Spring Boot, Oracle",https://example.com/case-studies/spring-boot-architecture
+"Flutter, Firebase, GraphQL",https://example.com/case-studies/flutter-mobile-suite
+"WordPress, PHP, MySQL",https://example.com/case-studies/wordpress-enterprise-cms
+"Magento, PHP, MySQL",https://example.com/case-studies/magento-ecommerce-scale
+"React Native, Node.js, MongoDB",https://example.com/case-studies/react-native-app
+"iOS, Swift, Core Data",https://example.com/case-studies/ios-swift-app
+"Android, Java, Room Persistence",https://example.com/case-studies/android-native-app
+"Kotlin, Android, Firebase",https://example.com/case-studies/kotlin-cloud-sync
+"Android TV, Kotlin, Android NDK",https://example.com/case-studies/android-tv-streaming
+"iOS, Swift, ARKit",https://example.com/case-studies/arkit-augmented-reality
+"Cross-platform, Xamarin, Azure",https://example.com/case-studies/xamarin-cloud-platform
+"Backend, Kotlin, Spring Boot",https://example.com/case-studies/kotlin-microservices-backend
+"Frontend, TypeScript, Angular",https://example.com/case-studies/typescript-angular-portal
+"Full-stack, JavaScript, Express.js",https://example.com/case-studies/express-rest-api
+"Machine Learning, Python, TensorFlow, PyTorch",https://example.com/case-studies/ai-ml-pipeline
+"DevOps, Jenkins, Docker, Kubernetes",https://example.com/case-studies/devops-ci-cd-cloud
+python,https://portfolio-website-one-sage-61.vercel.app/

@@ -40,22 +40,37 @@ class Portfolio:
 
         if (self.collection.count() == 0 or force_reload) and os.path.exists(self.file_path):
             df = pd.read_csv(self.file_path)
-            for _, row in df.iterrows():
-                techstack = str(row.get("Techstack", "")).strip()
-                links = str(row.get("Links", "")).strip()
-                if techstack and links:
-                    self.collection.add(
-                        documents=[techstack],
-                        metadatas=[{"links": links}],
-                        ids=[str(uuid.uuid4())]
-                    )
+            self.load_from_dataframe(df, force_reload=False)
 
-    def query_links(self, skills: Any, n_results: int = 2) -> List[Dict[str, str]]:
+    def load_from_dataframe(self, df: pd.DataFrame, force_reload: bool = True):
+        """Loads entries from an uploaded or custom pandas DataFrame into ChromaDB."""
+        if force_reload:
+            try:
+                all_ids = self.collection.get().get("ids", [])
+                if all_ids:
+                    self.collection.delete(ids=all_ids)
+            except Exception as e:
+                print(f"Error resetting collection: {e}")
+
+        for _, row in df.iterrows():
+            techstack = str(row.get("Techstack", "")).strip()
+            links = str(row.get("Links", "")).strip()
+            if techstack and links:
+                self.collection.add(
+                    documents=[techstack],
+                    metadatas=[{"links": links}],
+                    ids=[str(uuid.uuid4())]
+                )
+
+    def query_links(self, skills: Any, n_results: int = 2, base_portfolio_url: str = "") -> List[Dict[str, str]]:
         """
         Queries ChromaDB for links matching given skills (list of strings or a single query string).
         Returns a list of unique metadata dictionaries containing 'links'.
+        If base_portfolio_url is provided, it can be appended or used as custom proof URL.
         """
         if not skills:
+            if base_portfolio_url and base_portfolio_url.strip():
+                return [{"links": base_portfolio_url.strip()}]
             return []
 
         query_texts = []
@@ -79,6 +94,13 @@ class Portfolio:
                     if link and link not in seen_links:
                         seen_links.add(link)
                         unique_links.append({"links": link})
+
+            # If user provided their own portfolio URL in the sidebar, prioritize or append it
+            if base_portfolio_url and base_portfolio_url.strip():
+                clean_base = base_portfolio_url.strip()
+                if clean_base not in seen_links:
+                    unique_links.insert(0, {"links": clean_base})
+
             return unique_links
         except Exception as e:
             print(f"Error querying portfolio: {e}")
@@ -119,6 +141,17 @@ class Portfolio:
         # item 12: Validate URL scheme
         if not (links.startswith("http://") or links.startswith("https://")):
             raise ValueError("Portfolio link must start with http:// or https://")
+
+        # Avoid duplicate additions if already in CSV
+        if os.path.exists(self.file_path):
+            try:
+                curr_df = pd.read_csv(self.file_path)
+                is_dup = ((curr_df["Techstack"].astype(str).str.strip().str.lower() == techstack.lower()) &
+                          (curr_df["Links"].astype(str).str.strip() == links)).any()
+                if is_dup:
+                    return True
+            except Exception:
+                pass
 
         self.collection.add(
             documents=[techstack],
