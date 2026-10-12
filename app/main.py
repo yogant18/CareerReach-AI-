@@ -169,8 +169,9 @@ with st.sidebar:
     doc_count = portfolio.collection.count()
     st.info(f"📊 **Portfolio Database**: `{doc_count}` items indexed.")
     if st.button("🔄 Reload Portfolio Data"):
-        portfolio.load_portfolio()
+        portfolio.load_portfolio(force_reload=True)
         st.success("Vector store refreshed!")
+        st.rerun()
 
 
 # Helper function to get chain (silently reads server secrets / environment)

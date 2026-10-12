@@ -27,9 +27,18 @@ class Portfolio:
         
         self.load_portfolio()
 
-    def load_portfolio(self):
-        """Loads data from CSV into ChromaDB collection if collection is empty."""
-        if self.collection.count() == 0 and os.path.exists(self.file_path):
+    def load_portfolio(self, force_reload: bool = False):
+        """Loads data from CSV into ChromaDB collection. Re-syncs if force_reload is True."""
+        if force_reload:
+            try:
+                # Delete existing documents to re-sync
+                all_ids = self.collection.get().get("ids", [])
+                if all_ids:
+                    self.collection.delete(ids=all_ids)
+            except Exception as e:
+                print(f"Error resetting collection: {e}")
+
+        if (self.collection.count() == 0 or force_reload) and os.path.exists(self.file_path):
             df = pd.read_csv(self.file_path)
             for _, row in df.iterrows():
                 techstack = str(row.get("Techstack", "")).strip()
