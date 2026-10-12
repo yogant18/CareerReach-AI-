@@ -79,7 +79,8 @@ class Chain:
         model_name: str = "openai/gpt-oss-120b",
         temperature: float = 0.2
     ):
-        self.api_key = (api_key or os.getenv("GROQ_API_KEY", "")).strip()
+        raw_key = api_key if api_key is not None else os.getenv("GROQ_API_KEY", "")
+        self.api_key = str(raw_key).strip()
         self.model_name = model_name
         self.temperature = temperature
         self.last_error = None          # item 1
