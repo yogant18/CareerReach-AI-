@@ -345,17 +345,9 @@ with tab_email:
                                 else:
                                     st.write("None detected.")
 
-                            # Retrieve matching portfolio links
+                            # Retrieve matching portfolio links for cold email generation
                             portfolio = st.session_state.portfolio_instance
                             matched_links = portfolio.query_links(skills)
-
-                            if matched_links:
-                                st.markdown("**🔗 Relevant Portfolio Case Studies Found:**")
-                                for link_item in matched_links:
-                                    link_url = link_item.get("links", "")
-                                    st.markdown(f"- [{link_url}]({link_url})")
-                            else:
-                                st.caption("No direct portfolio match found. Standard company credentials will be used.")
 
                             # Generate Cold Email
                             with st.spinner(f"Writing personalized cold email for {role}..."):
