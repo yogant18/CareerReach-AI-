@@ -299,12 +299,15 @@ with tab_email:
                     jobs = chain.extract_jobs(scraped_content)
 
                     # item 3 — show fallback notice and real error when AI step failed
-                    if chain.fallback_notice:
-                        st.info(f"ℹ️ {chain.fallback_notice}")
-                    if chain.last_error and not chain.is_demo_mode:
+                    fallback_note = getattr(chain, "fallback_notice", None)
+                    err_note = getattr(chain, "last_error", None)
+                    is_demo = getattr(chain, "is_demo_mode", False)
+                    if fallback_note:
+                        st.info(f"ℹ️ {fallback_note}")
+                    if err_note and not is_demo:
                         st.warning(
                             f"⚠️ AI extraction failed and built-in parser was used.  \n"
-                            f"**Error:** `{chain.last_error}`"
+                            f"**Error:** `{err_note}`"
                         )
 
                     if not jobs:
@@ -367,12 +370,15 @@ with tab_email:
                                 )
 
                                 # item 3 — show fallback/error info for write_mail step
-                                if chain.fallback_notice:
-                                    st.info(f"ℹ️ {chain.fallback_notice}")
-                                if chain.last_error and not chain.is_demo_mode:
+                                fallback_note = getattr(chain, "fallback_notice", None)
+                                err_note = getattr(chain, "last_error", None)
+                                is_demo = getattr(chain, "is_demo_mode", False)
+                                if fallback_note:
+                                    st.info(f"ℹ️ {fallback_note}")
+                                if err_note and not is_demo:
                                     st.warning(
                                         f"⚠️ AI email generation failed; built-in template used.  \n"
-                                        f"**Error:** `{chain.last_error}`"
+                                        f"**Error:** `{err_note}`"
                                     )
 
                                 st.markdown("##### ✉️ Generated Cold Email:")
@@ -484,12 +490,15 @@ with tab_chat:
                             user_profile=user_prof
                         )
                         # item 3 — show fallback notice / real error beneath the response
-                        if chain.fallback_notice:
-                            st.info(f"ℹ️ {chain.fallback_notice}")
-                        if chain.last_error and not chain.is_demo_mode:
+                        chat_fallback = getattr(chain, "fallback_notice", None)
+                        chat_err = getattr(chain, "last_error", None)
+                        chat_demo = getattr(chain, "is_demo_mode", False)
+                        if chat_fallback:
+                            st.info(f"ℹ️ {chat_fallback}")
+                        if chat_err and not chat_demo:
                             st.warning(
                                 f"⚠️ AI call failed; built-in response used.  \n"
-                                f"**Error:** `{chain.last_error}`"
+                                f"**Error:** `{chat_err}`"
                             )
                         st.markdown(response)
                         st.session_state.chat_history.append({"role": "assistant", "content": response})

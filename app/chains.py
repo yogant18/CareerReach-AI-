@@ -43,6 +43,9 @@ def _is_model_not_found(exc: Exception) -> bool:
 
 
 class Chain:
+    last_error: Optional[str] = None
+    fallback_notice: Optional[str] = None
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -52,8 +55,8 @@ class Chain:
         self.api_key = (api_key or os.getenv("GROQ_API_KEY", "")).strip()
         self.model_name = model_name
         self.temperature = temperature
-        self.last_error: Optional[str] = None          # item 1
-        self.fallback_notice: Optional[str] = None     # item 4 — surface in UI
+        self.last_error = None          # item 1
+        self.fallback_notice = None     # item 4 — surface in UI
 
         self.is_demo_mode = (
             self.api_key.upper() == "DEMO"
