@@ -11,7 +11,6 @@ root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
-import streamlit.components.v1 as components
 from app.theme import apply_theme, hero, skeleton
 from app.chains import Chain
 from app.portfolio import Portfolio
@@ -27,6 +26,11 @@ def get_portfolio_resource():
     csv_path = os.path.join(root_dir, "my_portfolio.csv")
     vector_path = os.path.join(root_dir, "vectorstore")
     return Portfolio(file_path=csv_path, vectorstore_path=vector_path)
+
+
+def _portfolio_is_current(p) -> bool:
+    """False for a stale cached Portfolio object created before newer methods existed."""
+    return all(hasattr(p, m) for m in ("load_from_dataframe", "clear_portfolio", "is_empty"))
 
 
 # ---------------------------------------------------------------------------
@@ -59,15 +63,15 @@ st.set_page_config(
 
 # Render Copy button component
 def render_copy_button(text_to_copy: str, key_suffix: str, label: str = "Copy"):
-    safe_text = json.dumps(text_to_copy)
+    safe_text = json.dumps(text_to_copy).replace("</", "<\\/")
     btn_id = f"cp_{key_suffix}"
     
     html_code = f"""
     <div style="margin-top: 4px; margin-bottom: 8px;">
         <button id="{btn_id}" onclick="doCopy_{btn_id}()" style="
-            background: rgba(255, 255, 255, 0.05);
-            color: #E2E8F0;
-            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: rgba(15, 23, 42, 0.05);
+            color: #1E293B;
+            border: 1px solid rgba(15, 23, 42, 0.15);
             border-radius: 8px;
             padding: 6px 14px;
             font-size: 13px;
@@ -90,7 +94,11 @@ def render_copy_button(text_to_copy: str, key_suffix: str, label: str = "Copy"):
         </script>
     </div>
     """
-    components.html(html_code, height=44)
+    st.iframe(html_code, height=44)
+
+
+def _set_sample_url():
+    st.session_state["url_input"] = "https://jobs.nike.com/job/R-33460"
 
 
 # Apply luxury dark theme
@@ -111,7 +119,7 @@ with st.sidebar:
         ],
         index=0
     )
-    temperature = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
+    temperature = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.2, step=0.2)
 
     st.markdown("---")
     st.markdown("### Sender Profile")
@@ -151,12 +159,14 @@ with st.sidebar:
 
     st.markdown("---")
     # Vector store status
-    if "portfolio_instance" not in st.session_state or not hasattr(st.session_state.portfolio_instance, "load_from_dataframe"):
+    if "portfolio_instance" not in st.session_state or not _portfolio_is_current(st.session_state.portfolio_instance):
         st.cache_resource.clear()
         st.session_state.portfolio_instance = get_portfolio_resource()
     portfolio = st.session_state.portfolio_instance
     doc_count = portfolio.collection.count()
     st.markdown(f"**Portfolio Database**: `{doc_count}` items indexed.")
+    if doc_count == 0:
+        st.caption("Empty. Add items in the Portfolio Vector Store tab.")
     if st.button("Reload Portfolio Data"):
         portfolio.load_portfolio(force_reload=True)
         st.success("Vector store refreshed.")
@@ -225,17 +235,12 @@ with tab_email:
         with col_url:
             url_input = st.text_input(
                 "Company Careers Page / Job Posting URL",
-                placeholder="https://jobs.nike.com/job/R-33460"
+                placeholder="https://jobs.nike.com/job/R-33460",
+                key="url_input"
             )
         with col_example:
-            st.write("")
-            st.write("")
-            if st.button("Use Sample URL"):
-                url_input = "https://jobs.nike.com/job/R-33460"
-                st.session_state["sample_url"] = url_input
-
-        if "sample_url" in st.session_state and not url_input:
-            url_input = st.session_state["sample_url"]
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            st.button("Use Sample URL", on_click=_set_sample_url)
 
         submit_btn = st.button("Extract & Generate Email", type="primary")
 
@@ -243,15 +248,18 @@ with tab_email:
             if not url_input.strip():
                 st.warning("Please provide a valid URL.")
             else:
-                st.markdown(skeleton("Scraping webpage and parsing job listings..."), unsafe_allow_html=True)
+                sk_scrape = st.empty()
+                sk_scrape.markdown(skeleton("Scraping webpage and parsing job listings..."), unsafe_allow_html=True)
                 with st.spinner("Processing..."):
                     try:
                         scraped_content = scrape_website(url_input.strip())
+                        sk_scrape.empty()
                         if not scraped_content:
                             st.error("No readable text could be retrieved from the given URL. Try pasting the job description directly.")
                         else:
                             run_generation = True
                     except Exception as err:
+                        sk_scrape.empty()
                         st.error(f"Web scraping error: {err}. You can switch to 'Paste Job Description Directly' to proceed.")
 
     else:
@@ -283,10 +291,12 @@ with tab_email:
             if not chain:
                 st.error("Please configure a valid Groq API Key to generate cold emails.")
             else:
-                st.markdown(skeleton("Analyzing job requirements and matching portfolio case studies..."), unsafe_allow_html=True)
+                sk_analyze = st.empty()
+                sk_analyze.markdown(skeleton("Analyzing job requirements and matching portfolio case studies..."), unsafe_allow_html=True)
                 with st.spinner("Processing..."):
                     try:
                         jobs = chain.extract_jobs(scraped_content)
+                        sk_analyze.empty()
 
                         # Show fallback notice and real error when AI step failed
                         fallback_note = getattr(chain, "fallback_notice", None)
@@ -304,7 +314,7 @@ with tab_email:
                             st.warning("No specific job roles could be identified in the text.")
                             # Empty state: one clear button
                             if st.button("Try Sample Job Description", key="empty_jobs_retry"):
-                                st.session_state["sample_url"] = "https://jobs.nike.com/job/R-33460"
+                                st.session_state["url_input"] = "https://jobs.nike.com/job/R-33460"
                                 st.rerun()
                         else:
                             total_found = len(jobs)
@@ -340,9 +350,12 @@ with tab_email:
                                 # Retrieve matching portfolio links for cold email generation
                                 portfolio = st.session_state.portfolio_instance
                                 matched_links = portfolio.query_links(skills, base_portfolio_url=portfolio_url)
+                                if not matched_links:
+                                    st.caption("No portfolio links available, so this email has no proof-of-work link. Add portfolio items or set your Portfolio URL in the sidebar.")
 
                                 # Generate Cold Email with Skeleton indicator
-                                st.markdown(skeleton(f"Writing personalized outreach email for {role}..."), unsafe_allow_html=True)
+                                sk_mail = st.empty()
+                                sk_mail.markdown(skeleton(f"Writing personalized outreach email for {html.escape(str(role))}..."), unsafe_allow_html=True)
                                 with st.spinner("Drafting..."):
                                     user_profile_tone = email_tone
                                     email_text = chain.write_mail(
@@ -354,6 +367,7 @@ with tab_email:
                                         tone=user_profile_tone,
                                         max_words=max_words_selected
                                     )
+                                    sk_mail.empty()
 
                                     # Show fallback/error info for write_mail step
                                     fallback_note = getattr(chain, "fallback_notice", None)
@@ -402,6 +416,7 @@ with tab_email:
                                 st.markdown("---")
 
                     except Exception as err:
+                        sk_analyze.empty()
                         st.error(f"Error generating email: {str(err)}")
 
 
@@ -482,11 +497,12 @@ with tab_chat:
                 st.warning(error_msg)
         else:
             with st.chat_message("assistant"):
-                st.markdown(skeleton("Formulating outreach strategy..."), unsafe_allow_html=True)
+                sk_chat = st.empty()
+                sk_chat.markdown(skeleton("Formulating outreach strategy..."), unsafe_allow_html=True)
                 with st.spinner("Thinking..."):
                     try:
                         portfolio_df = st.session_state.portfolio_instance.get_all_portfolios()
-                        portfolio_summary = portfolio_df.to_string(index=False)
+                        portfolio_summary = portfolio_df.to_string(index=False) if not portfolio_df.empty else ""
                         
                         user_prof = {
                             "name": sender_name,
@@ -500,6 +516,7 @@ with tab_chat:
                             user_profile=user_prof
                         )
 
+                        sk_chat.empty()
                         chat_fallback = getattr(chain, "fallback_notice", None)
                         chat_err = getattr(chain, "last_error", None)
                         chat_demo = getattr(chain, "is_demo_mode", False)
@@ -514,6 +531,7 @@ with tab_chat:
                         render_copy_button(response, key_suffix=f"chat_reply_{len(st.session_state.chat_history)}", label="Copy Response")
                         st.session_state.chat_history.append({"role": "assistant", "content": response})
                     except Exception as chat_err:
+                        sk_chat.empty()
                         err_text = f"Error generating response: {str(chat_err)}"
                         st.error(err_text)
                         st.session_state.chat_history.append({"role": "assistant", "content": err_text})
@@ -532,69 +550,68 @@ with tab_chat:
 with tab_portfolio:
     st.markdown("### Portfolio Vector Database")
     st.write(
-        "Upload your own portfolio CSV (Techstack, Links) or use our Demo Agency Library. "
+        "Upload your own portfolio CSV (Techstack, Links) or add items one by one. "
         "When you upload your CSV, ChromaDB indexes your projects in real-time so your outreach emails quote your own real case studies."
     )
 
     # -------------------------------------------------------------
-    # OPTION 2: Upload Custom Portfolio CSV or Use Demo Library
+    # Upload a custom portfolio CSV or add items manually
     # -------------------------------------------------------------
-    st.markdown('<div class="glass-panel" style="margin-bottom: 24px;">', unsafe_allow_html=True)
-    st.markdown("#### 📂 Portfolio Source & Custom CSV Upload")
+    with st.container(border=True):
+        st.markdown("#### Portfolio Source & Custom CSV Upload")
     
-    col_upload, col_reset = st.columns([3, 1])
-    portfolio = st.session_state.get("portfolio_instance")
-    if portfolio is None or not hasattr(portfolio, "load_from_dataframe"):
-        st.cache_resource.clear()
-        portfolio = get_portfolio_resource()
-        st.session_state.portfolio_instance = portfolio
+        col_upload, col_reset = st.columns([3, 1])
+        portfolio = st.session_state.get("portfolio_instance")
+        if portfolio is None or not _portfolio_is_current(portfolio):
+            st.cache_resource.clear()
+            portfolio = get_portfolio_resource()
+            st.session_state.portfolio_instance = portfolio
     
-    with col_upload:
-        uploaded_csv = st.file_uploader(
-            "Upload your own portfolio CSV (Techstack, Links) or use our Demo Agency Library",
-            type=["csv"],
-            help="Upload a CSV with 'Techstack' and 'Links' headers. ChromaDB will index your case studies immediately."
-        )
-        if uploaded_csv is not None:
-            upload_id = f"{uploaded_csv.name}_{uploaded_csv.size}"
-            if st.session_state.get("current_portfolio_upload") != upload_id:
-                try:
-                    user_df = pd.read_csv(uploaded_csv)
-                    # Normalize column names
-                    col_map = {c: c.strip().capitalize() for c in user_df.columns}
-                    user_df.rename(columns=col_map, inplace=True)
-                    if "Techstack" in user_df.columns and "Links" in user_df.columns:
-                        portfolio.load_from_dataframe(user_df, force_reload=True)
-                        st.session_state["current_portfolio_upload"] = upload_id
-                        st.session_state["portfolio_source_label"] = f"Custom CSV: {uploaded_csv.name}"
-                        st.success(f"Indexed {len(user_df)} custom case studies from '{uploaded_csv.name}' into ChromaDB! Emails will now cite your own case studies.")
-                        st.rerun()
-                    else:
-                        st.error("Uploaded CSV must contain 'Techstack' and 'Links' columns.")
-                except Exception as e:
-                    st.error(f"Error reading uploaded CSV: {e}")
+        with col_upload:
+            uploaded_csv = st.file_uploader(
+                "Upload your own portfolio CSV (Techstack, Links)",
+                type=["csv"],
+                help="Upload a CSV with 'Techstack' and 'Links' headers. ChromaDB will index your case studies immediately."
+            )
+            if uploaded_csv is not None:
+                upload_id = f"{uploaded_csv.name}_{uploaded_csv.size}"
+                if st.session_state.get("current_portfolio_upload") != upload_id:
+                    try:
+                        user_df = pd.read_csv(uploaded_csv)
+                        # Normalize column names
+                        col_map = {c: c.strip().capitalize() for c in user_df.columns}
+                        user_df.rename(columns=col_map, inplace=True)
+                        if "Techstack" in user_df.columns and "Links" in user_df.columns:
+                            portfolio.load_from_dataframe(user_df, force_reload=True)
+                            st.session_state["current_portfolio_upload"] = upload_id
+                            st.session_state["portfolio_source_label"] = f"Custom CSV: {uploaded_csv.name}"
+                            st.success(f"Indexed {len(user_df)} custom case studies from '{uploaded_csv.name}' into ChromaDB! Emails will now cite your own case studies.")
+                            st.rerun()
+                        else:
+                            st.error("Uploaded CSV must contain 'Techstack' and 'Links' columns.")
+                    except Exception as e:
+                        st.error(f"Error reading uploaded CSV: {e}")
 
-    with col_reset:
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        if st.button("🔄 Reset to Demo Library", help="Reload the standard enterprise case studies library"):
-            portfolio.load_portfolio(force_reload=True)
-            st.session_state["current_portfolio_upload"] = None
-            st.session_state["portfolio_source_label"] = "Demo Agency Library"
-            st.success("Reset back to Demo Agency Library!")
-            st.rerun()
+        with col_reset:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            if st.button("Clear Portfolio", help="Remove every portfolio item and empty the saved CSV"):
+                portfolio.clear_portfolio()
+                st.session_state["current_portfolio_upload"] = None
+                st.session_state["portfolio_source_label"] = "Empty"
+                st.success("Portfolio cleared.")
+                st.rerun()
 
-        # Download sample template
-        sample_csv = "Techstack,Links\n\"FastAPI, PostgreSQL, Docker\",https://example.com/case-studies/fintech-api\n\"React, Next.js, Stripe\",https://example.com/case-studies/ecommerce-platform\n\"PyTorch, LLMs, LangChain\",https://example.com/case-studies/ai-copilot\n"
-        st.download_button(
-            label="📥 Sample CSV Template",
-            data=sample_csv,
-            file_name="portfolio_template.csv",
-            mime="text/csv"
-        )
+            # Download sample template
+            sample_csv = "Techstack,Links\n\"FastAPI, PostgreSQL, Docker\",https://example.com/case-studies/fintech-api\n\"React, Next.js, Stripe\",https://example.com/case-studies/ecommerce-platform\n\"PyTorch, LLMs, LangChain\",https://example.com/case-studies/ai-copilot\n"
+            st.download_button(
+                label="Sample CSV Template",
+                data=sample_csv,
+                file_name="portfolio_template.csv",
+                mime="text/csv"
+            )
 
-    active_source = st.session_state.get("portfolio_source_label", "Demo Agency Library")
-    st.markdown(f'<div style="font-size: 0.85rem; color: #94A3B8; margin-top: 6px;">Active Library: <span class="badge-glow" style="margin-left: 6px;">{html.escape(active_source)}</span></div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        active_source = st.session_state.get("portfolio_source_label", "My Portfolio")
+        st.markdown(f'<div style="font-size: 0.85rem; color: #475569; margin-top: 6px;">Active Library: <span class="badge-glow" style="margin-left: 6px;">{html.escape(active_source)}</span></div>', unsafe_allow_html=True)
 
     col_view, col_add = st.columns([3, 2])
 
@@ -603,34 +620,33 @@ with tab_portfolio:
         df_port = portfolio.get_all_portfolios()
 
         # Minimalist Glassmorphism (Vercel) Cards instead of a glaring white table
+        def _safe_url(u):
+            u = str(u).strip()
+            return u if u.lower().startswith(("http://", "https://")) else None
+
         if df_port is not None and not df_port.empty:
-            for _, row in df_port.iterrows():
+            for n, (_, row) in enumerate(df_port.iterrows()):
                 tech = html.escape(str(row.get("Techstack", "")))
-                link = str(row.get("Links", ""))
-                card_html = f"""
-                <div class="portfolio-glass-card">
-                    <div>
-                        <div style="font-weight: 700; color: #F8FAFC; font-size: 0.95rem; margin-bottom: 4px;">{tech}</div>
-                        <a href="{link}" target="_blank" style="color: #A855F7; text-decoration: none; font-size: 0.82rem;">{link}</a>
-                    </div>
-                    <div>
-                        <a href="{link}" target="_blank" style="
-                            background: rgba(168, 85, 247, 0.15);
-                            color: #D8B4FE;
-                            border: 1px solid rgba(168, 85, 247, 0.3);
-                            padding: 6px 14px;
-                            border-radius: 8px;
-                            font-size: 0.8rem;
-                            font-weight: 600;
-                            text-decoration: none;
-                            display: inline-block;
-                        ">Open ↗</a>
-                    </div>
-                </div>
-                """
-                st.markdown(card_html, unsafe_allow_html=True)
+                raw = str(row.get("Links", ""))
+                url = _safe_url(raw)
+                with st.container(border=True):
+                    c_txt, c_btn = st.columns([4, 1], vertical_alignment="center")
+                    with c_txt:
+                        st.markdown(
+                            f'<div style="font-weight:700;color:#0F172A;font-size:0.95rem;margin-bottom:2px;">{tech}</div>'
+                            f'<div style="font-size:0.82rem;color:#2563EB;word-break:break-all;">{html.escape(raw)}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    with c_btn:
+                        if url:
+                            st.link_button("Open", url, key=f"open_port_{n}")
+                        else:
+                            st.caption("Invalid URL")
         else:
-            st.info("No portfolios currently indexed.")
+            st.info(
+                "Your portfolio is empty. Upload a CSV above or add an item on the right. "
+                "Until then, emails will only cite the Portfolio / Website URL from the sidebar, if you set one."
+            )
 
         st.markdown("---")
         st.subheader("Test Semantic Search")
@@ -638,7 +654,8 @@ with tab_portfolio:
             "Enter skills or tech query (e.g. 'Kubernetes cloud deployment', 'iOS ARKit')",
             value="Machine Learning Python"
         )
-        if st.button("Search Vector DB", type="primary"):
+        if st.button("Search Vector DB", type="primary", disabled=portfolio.is_empty(),
+                     help="Add portfolio items first" if portfolio.is_empty() else None):
             st.session_state["search_matches"] = portfolio.query_links(
                 search_query, n_results=3, base_portfolio_url=portfolio_url
             )
@@ -649,38 +666,26 @@ with tab_portfolio:
             if matches:
                 st.write("**Matching Links Found:**")
                 for i, m in enumerate(matches):
-                    link_url = m.get('links', '')
-                    match_html = f"""
-                    <div class="portfolio-glass-card" style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="flex: 1; margin-right: 12px; overflow: hidden;">
-                            <span style="color: #4ADE80; font-size: 0.85rem; font-weight: 600;">Match #{i+1}</span>
-                            <div style="margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                <a href="{link_url}" target="_blank" rel="noopener noreferrer" style="color: #A855F7; text-decoration: underline; font-size: 0.88rem; font-weight: 500;">{html.escape(link_url)}</a>
-                            </div>
-                        </div>
-                        <div>
-                            <a href="{link_url}" target="_blank" rel="noopener noreferrer" style="
-                                background: rgba(168, 85, 247, 0.2);
-                                color: #D8B4FE;
-                                border: 1px solid rgba(168, 85, 247, 0.4);
-                                padding: 6px 14px;
-                                border-radius: 8px;
-                                font-size: 0.82rem;
-                                font-weight: 600;
-                                text-decoration: none;
-                                display: inline-block;
-                            ">Open ↗</a>
-                        </div>
-                    </div>
-                    """
-                    st.markdown(match_html, unsafe_allow_html=True)
+                    raw_url = str(m.get('links', ''))
+                    url = _safe_url(raw_url)
+                    with st.container(border=True):
+                        c_txt, c_btn = st.columns([4, 1], vertical_alignment="center")
+                        with c_txt:
+                            st.markdown(
+                                f'<span style="color:#15803D;font-size:0.85rem;font-weight:600;">Match #{i+1}</span>'
+                                f'<div style="font-size:0.88rem;color:#2563EB;word-break:break-all;">{html.escape(raw_url)}</div>',
+                                unsafe_allow_html=True,
+                            )
+                        with c_btn:
+                            if url:
+                                st.link_button("Open", url, key=f"open_match_{i}")
+                            else:
+                                st.caption("Invalid URL")
             else:
                 st.info("No matching portfolio entries found.")
 
     with col_add:
         st.subheader("Add Portfolio Item")
-        st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
-
         # Show persistent success notice when an item is added
         if st.session_state.get("add_portfolio_msg"):
             st.success(st.session_state["add_portfolio_msg"])
@@ -708,4 +713,3 @@ with tab_portfolio:
                         st.warning(f"Validation error: {val_err}")
                     except Exception as err:
                         st.error(f"Error saving portfolio: {err}")
-        st.markdown('</div>', unsafe_allow_html=True)

@@ -370,7 +370,7 @@ Warm regards,
 {profile_str}
 
 Portfolio database context:
-{portfolio_context if portfolio_context else "Standard software engineering & AI services."}
+{portfolio_context if portfolio_context else "The user has not added any portfolio items yet. Do not invent case studies, clients, results or links; if asked for matching case studies, tell them to add items in the Portfolio Vector Store tab (upload a CSV or add an item) or set their portfolio URL in the sidebar."}
 
 Provide high-value, crisp, actionable advice with markdown formatting.
 """
@@ -420,17 +420,21 @@ Do you have 5 minutes for a quick touchpoint this Thursday afternoon?
 Best,  
 **[Your Name]**
 """
-        elif "react" in q_lower or "node" in q_lower or "match" in q_lower:
-            return """### 💼 Matched Portfolio Case Studies:
-
-Based on the indexed portfolio database, the top matching case studies for **React & Node.js** are:
-
-- 🔗 **React, Node.js, MongoDB Portfolio**: [https://example.com/react-portfolio](https://example.com/react-portfolio)
-- 🔗 **Full-Stack JavaScript (Express.js) Showcase**: [https://example.com/full-stack-js-portfolio](https://example.com/full-stack-js-portfolio)
-- 🔗 **React Native Mobile Solution**: [https://example.com/react-native-portfolio](https://example.com/react-native-portfolio)
-
-Would you like me to draft a cold outreach email pitching one of these case studies?
-"""
+        elif "portfolio" in q_lower or "react" in q_lower or "node" in q_lower or "match" in q_lower:
+            if not portfolio_context:
+                return (
+                    "### Portfolio Case Studies\n\n"
+                    "Your portfolio is empty, so there is nothing to match yet.\n\n"
+                    "- Open the **Portfolio Vector Store** tab and upload a CSV (Techstack, Links), or add a single item.\n"
+                    "- Or set **Your Portfolio / Website URL** in the sidebar to use it as proof of work.\n\n"
+                    "Once you add items, ask again and I will match them to the role."
+                )
+            return (
+                "### Your Indexed Portfolio\n\n"
+                "Here is what is currently in your portfolio database:\n\n"
+                f"```\n{portfolio_context}\n```\n\n"
+                "Tell me the target role and I can suggest which of these to cite."
+            )
         elif "vendor" in q_lower or "objection" in q_lower:
             return """### 🛡️ How to Handle "We don't work with external vendors":
 

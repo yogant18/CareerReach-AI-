@@ -39,8 +39,21 @@ class Portfolio:
                 print(f"Error resetting collection: {e}")
 
         if (self.collection.count() == 0 or force_reload) and os.path.exists(self.file_path):
-            df = pd.read_csv(self.file_path)
+            try:
+                df = pd.read_csv(self.file_path)
+            except pd.errors.EmptyDataError:
+                return
             self.load_from_dataframe(df, force_reload=False)
+
+    def clear_portfolio(self):
+        """Removes every item from ChromaDB and empties the saved CSV (header only)."""
+        all_ids = self.collection.get().get("ids", [])
+        if all_ids:
+            self.collection.delete(ids=all_ids)
+        pd.DataFrame(columns=["Techstack", "Links"]).to_csv(self.file_path, index=False)
+
+    def is_empty(self) -> bool:
+        return self.collection.count() == 0
 
     def load_from_dataframe(self, df: pd.DataFrame, force_reload: bool = True):
         """Loads entries from an uploaded or custom pandas DataFrame into ChromaDB."""
@@ -68,6 +81,11 @@ class Portfolio:
         Returns a list of unique metadata dictionaries containing 'links'.
         If base_portfolio_url is provided, it can be appended or used as custom proof URL.
         """
+        if self.collection.count() == 0:
+            if base_portfolio_url and base_portfolio_url.strip():
+                return [{"links": base_portfolio_url.strip()}]
+            return []
+
         if not skills:
             if base_portfolio_url and base_portfolio_url.strip():
                 return [{"links": base_portfolio_url.strip()}]
@@ -109,7 +127,7 @@ class Portfolio:
     def get_all_portfolios(self) -> pd.DataFrame:
         """
         Retrieves all indexed portfolios directly from ChromaDB.
-        Falls back to CSV if ChromaDB collection is empty.
+        Returns an empty DataFrame when nothing is indexed.
         """
         data = self.collection.get()
         documents = data.get("documents", [])
@@ -123,8 +141,6 @@ class Portfolio:
                 })
             return pd.DataFrame(records)
 
-        if os.path.exists(self.file_path):
-            return pd.read_csv(self.file_path)
         return pd.DataFrame(columns=["Techstack", "Links"])
 
     def add_portfolio(self, techstack: str, links: str) -> bool:
