@@ -7,6 +7,8 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.exceptions import OutputParserException
 
+from .providers import GROQ, PROVIDERS, build_llm, is_valid_key, redact_keys
+
 logger = logging.getLogger(__name__)
 
 # Fallback model used when the selected model is not found on Groq
@@ -62,10 +64,7 @@ def _clean_error_message(exc: Exception) -> str:
     """
     Sanitize exception message to ensure no API key, bearer tokens, or headers are included.
     """
-    msg = str(exc)
-    # Remove any Authorization headers or bearer tokens if present
-    msg = re.sub(r"(?i)bearer\s+[A-Za-z0-9_\-\.]+", "Bearer [REDACTED]", msg)
-    msg = re.sub(r"gsk_[A-Za-z0-9]+", "[REDACTED]", msg)
+    msg = redact_keys(str(exc))
     return f"{type(exc).__name__}: {msg}"
 
 
@@ -77,33 +76,30 @@ class Chain:
         self,
         api_key: Optional[str] = None,
         model_name: str = "openai/gpt-oss-120b",
-        temperature: float = 0.2
+        temperature: float = 0.2,
+        provider: str = GROQ
     ):
-        raw_key = api_key if api_key is not None else os.getenv("GROQ_API_KEY", "")
+        self.provider = provider if provider in PROVIDERS else GROQ
+        raw_key = api_key if api_key is not None else (
+            os.getenv("GROQ_API_KEY", "") if self.provider == GROQ else ""
+        )
         self.api_key = str(raw_key).strip()
         self.model_name = model_name
         self.temperature = temperature
         self.last_error = None          # item 1
         self.fallback_notice = None     # item 4 — surface in UI
 
-        self.is_demo_mode = (
-            self.api_key.upper() == "DEMO"
-            or self.api_key.upper() == "DEMO_MODE"
-            or not self.api_key.startswith("gsk_")
-        )
+        # No usable key for the chosen provider -> built-in templates only
+        self.is_demo_mode = not is_valid_key(self.provider, self.api_key)
 
         self.llm = None
         if not self.is_demo_mode:
             try:
-                self.llm = ChatGroq(
-                    temperature=self.temperature,
-                    groq_api_key=self.api_key,
-                    model_name=self.model_name
-                )
+                self.llm = build_llm(self.provider, self.api_key, self.model_name, self.temperature)
             except Exception as exc:
                 # item 1 — record error type + message, never the key
                 self.last_error = _clean_error_message(exc)
-                logger.warning("Chain init failed — %s: %s", type(exc).__name__, exc)
+                logger.warning("Chain init failed — %s", self.last_error)
                 self.is_demo_mode = True
 
     # ------------------------------------------------------------------
@@ -119,7 +115,7 @@ class Chain:
         try:
             return runnable.invoke(inputs)
         except Exception as exc:
-            if _is_model_not_found(exc) and self.model_name != _FALLBACK_MODEL:
+            if self.provider == GROQ and _is_model_not_found(exc) and self.model_name != _FALLBACK_MODEL:
                 models_tried.append(_FALLBACK_MODEL)
                 notice = (
                     f"Model **{self.model_name}** was not found on Groq. "
@@ -187,7 +183,7 @@ class Chain:
             except Exception as exc:
                 # item 1 + 3 — store error for UI display
                 self.last_error = _clean_error_message(exc)
-                logger.warning("Groq extraction failed — %s", self.last_error)
+                logger.warning("AI extraction failed — %s", self.last_error)
 
         # Built-in Heuristic Extraction
         detected_skills = []
@@ -313,7 +309,7 @@ class Chain:
             except Exception as exc:
                 # item 1 + 3
                 self.last_error = _clean_error_message(exc)
-                logger.warning("Groq email generation failed — %s", self.last_error)
+                logger.warning("AI email generation failed — %s", self.last_error)
 
         # Built-in High-Converting Cold Email Engine
         skills_formatted = ", ".join(skills[:3]) if skills else "modern software engineering and AI architectures"
@@ -388,7 +384,7 @@ Provide high-value, crisp, actionable advice with markdown formatting.
             except Exception as exc:
                 # item 1 + 3
                 self.last_error = _clean_error_message(exc)
-                logger.warning("Groq chat failed — %s", self.last_error)
+                logger.warning("AI chat failed — %s", self.last_error)
 
         # Built-in Conversational Assistant Engine
         q_lower = last_user_query.lower()
@@ -455,3 +451,390 @@ Here is my recommendation:
 
 Feel free to ask me to write a specific cold email, refine a pitch, or suggest portfolio links!
 """
+
+    # ------------------------------------------------------------------
+    # Extras that build on a generated email
+    # ------------------------------------------------------------------
+    def _parse_json_list(self, raw: str) -> List[Dict[str, Any]]:
+        """Parse a model reply that should be a JSON array of objects."""
+        cleaned = _strip_think(raw)
+        if not cleaned:
+            raise ValueError("Model output was empty.")
+        parsed = JsonOutputParser().parse(cleaned)
+        if isinstance(parsed, dict):
+            # Some models wrap the list: {"subjects": [...]}
+            lists = [v for v in parsed.values() if isinstance(v, list)]
+            parsed = lists[0] if lists else [parsed]
+        if not isinstance(parsed, list):
+            raise ValueError("Model output was not a JSON list.")
+        return [item for item in parsed if isinstance(item, dict)]
+
+    def subject_lines(self, job: Dict[str, Any], email_text: str, count: int = 5) -> List[Dict[str, str]]:
+        """
+        Suggests alternative subject lines for an email.
+        Returns a list of {"subject": ..., "why": ...}.
+        """
+        self.last_error = None
+        self.fallback_notice = None
+        role = str(job.get("role", "the open role"))
+
+        if not self.is_demo_mode and self.llm:
+            try:
+                prompt = PromptTemplate.from_template(
+                    """
+                    ### COLD EMAIL:
+                    {email_text}
+
+                    ### TARGET ROLE:
+                    {job_role}
+
+                    ### INSTRUCTION:
+                    Write {count} different subject lines for the cold email above.
+                    Each must be under 60 characters, specific to this role, and free of clickbait,
+                    ALL CAPS and exclamation marks. Vary the angle: a question, a specific skill,
+                    a result, a direct statement, a short curiosity hook.
+                    For each one, give a short reason (under 15 words) why it could get opened.
+                    Never invent clients, results or numbers that are not in the email.
+
+                    Return ONLY a valid JSON array of objects with keys "subject" and "why".
+                    No markdown ticks, no preamble.
+                    ### VALID JSON:
+                    """
+                )
+                res = self._invoke_with_fallback(prompt | self.llm, {
+                    "email_text": email_text, "job_role": role, "count": count,
+                })
+                items = []
+                for item in self._parse_json_list(res.content):
+                    subject = str(item.get("subject", "")).strip().strip('"')
+                    if subject:
+                        items.append({"subject": subject, "why": str(item.get("why", "")).strip()})
+                if items:
+                    return items[:count]
+                raise ValueError("Model returned no subject lines.")
+            except Exception as exc:
+                self.last_error = _clean_error_message(exc)
+                logger.warning("AI subject lines failed — %s", self.last_error)
+
+        skills = job.get("skills", []) or []
+        skill = str(skills[0]) if skills else "engineering"
+        return [
+            {"subject": f"Quick question about your {role} search", "why": "A question invites a reply."},
+            {"subject": f"{skill} help for your {role} opening", "why": "Names the skill they are hiring for."},
+            {"subject": f"An idea for filling the {role} role faster", "why": "Promises a concrete benefit."},
+            {"subject": f"Saw your {role} posting", "why": "Short, plain and clearly relevant."},
+            {"subject": f"Extra {skill} capacity while you hire", "why": "Offers help with the immediate gap."},
+        ][:count]
+
+    def follow_ups(
+        self,
+        job: Dict[str, Any],
+        email_text: str,
+        sender_name: str,
+        tone: str = "Professional & Persuasive",
+        days: tuple = (3, 7, 14),
+    ) -> List[Dict[str, Any]]:
+        """
+        Writes a follow-up sequence for an email that got no reply.
+        Returns a list of {"day": int, "subject": ..., "body": ...}.
+        """
+        self.last_error = None
+        self.fallback_notice = None
+        role = str(job.get("role", "the open role"))
+
+        if not self.is_demo_mode and self.llm:
+            try:
+                prompt = PromptTemplate.from_template(
+                    """
+                    ### ORIGINAL COLD EMAIL (no reply yet):
+                    {email_text}
+
+                    ### INSTRUCTION:
+                    You are {sender_name}. Write {n} short follow-up emails to send {day_list} days
+                    after the original email above, which got no reply. Tone: {tone}.
+
+                    Rules:
+                    - Each follow-up is under 80 words, plain text, no markdown, no bullet lists.
+                    - Each one adds something new (a different angle, a useful detail from the original
+                      email, or an easier ask). Do not just repeat "checking in".
+                    - The last one is a polite final note that leaves the door open.
+                    - Use only facts and links from the original email. Never invent clients, results or numbers.
+                    - Sign each one as {sender_name}.
+
+                    Return ONLY a valid JSON array of {n} objects with keys
+                    "day" (number), "subject" (string) and "body" (string).
+                    No markdown ticks, no preamble.
+                    ### VALID JSON:
+                    """
+                )
+                res = self._invoke_with_fallback(prompt | self.llm, {
+                    "email_text": email_text,
+                    "sender_name": sender_name,
+                    "tone": tone,
+                    "n": len(days),
+                    "day_list": ", ".join(str(d) for d in days),
+                })
+                items = []
+                for i, item in enumerate(self._parse_json_list(res.content)):
+                    body = _clean_email_markdown(str(item.get("body", "")))
+                    if not body:
+                        continue
+                    try:
+                        day = int(item.get("day", days[min(i, len(days) - 1)]))
+                    except (TypeError, ValueError):
+                        day = days[min(i, len(days) - 1)]
+                    items.append({
+                        "day": day,
+                        "subject": str(item.get("subject", "")).strip() or f"Re: {role}",
+                        "body": body,
+                    })
+                if items:
+                    return items[:len(days)]
+                raise ValueError("Model returned no follow-ups.")
+            except Exception as exc:
+                self.last_error = _clean_error_message(exc)
+                logger.warning("AI follow-ups failed — %s", self.last_error)
+
+        name = sender_name or "Me"
+        templates = [
+            f"Hi,\n\nFollowing up on my note about your {role} opening. I know hiring takes a lot of "
+            f"attention, so I'll keep it short: would a 10-minute call this week be useful?\n\nBest,\n{name}",
+            f"Hi,\n\nOne more thought on the {role} role. If it helps, I can send a short summary of how "
+            f"we'd approach the first 30 days, so you can judge the fit without a call.\n\nBest,\n{name}",
+            f"Hi,\n\nI don't want to crowd your inbox, so this is my last note about the {role} role. "
+            f"If the timing changes, I'd be glad to pick this up again.\n\nBest,\n{name}",
+        ]
+        return [
+            {"day": d, "subject": f"Re: {role}", "body": templates[min(i, len(templates) - 1)]}
+            for i, d in enumerate(days)
+        ]
+
+    def rewrite_mail(self, email_text: str, instruction: str, max_words: int = 150) -> str:
+        """
+        Rewrites an email following a short instruction (e.g. "make it shorter").
+        Returns the original text unchanged, with last_error set, when no AI is available.
+        """
+        self.last_error = None
+        self.fallback_notice = None
+
+        if self.is_demo_mode or not self.llm:
+            self.last_error = "Rewriting needs an AI key. Add one in the sidebar or use the free trial."
+            return email_text
+
+        try:
+            prompt = PromptTemplate.from_template(
+                """
+                ### CURRENT EMAIL:
+                {email_text}
+
+                ### CHANGE REQUESTED:
+                {instruction}
+
+                ### RULES:
+                - Apply the change requested and keep everything else the same in meaning.
+                - Keep the 'Subject:' line as the first line, then a blank line, then the body and sign-off.
+                - Output plain text only. No markdown, no asterisks, no bullet lists, no bold.
+                - Maximum {max_words} words.
+                - Keep every link exactly as written. Never invent clients, results or numbers.
+                - No preamble and no commentary: return only the rewritten email.
+
+                ### REWRITTEN EMAIL:
+                """
+            )
+            res = self._invoke_with_fallback(prompt | self.llm, {
+                "email_text": email_text, "instruction": instruction, "max_words": max_words,
+            })
+            rewritten = _clean_email_markdown(_strip_think(res.content).strip())
+            if not rewritten:
+                raise ValueError("Model output was empty.")
+            return rewritten
+        except Exception as exc:
+            self.last_error = _clean_error_message(exc)
+            logger.warning("AI rewrite failed — %s", self.last_error)
+            return email_text
+
+    # ------------------------------------------------------------------
+    # Job-seeker mode and LinkedIn
+    # ------------------------------------------------------------------
+    def write_application_mail(
+        self,
+        job: Dict[str, Any],
+        links: List[Dict[str, str]],
+        sender_name: str,
+        resume_text: str,
+        sender_role: str = "",
+        tone: str = "Professional & Persuasive",
+        max_words: int = 150,
+    ) -> str:
+        """
+        Writes an email from a job seeker to the hiring manager for a role,
+        grounded in the candidate's resume.
+        """
+        self.last_error = None
+        self.fallback_notice = None
+
+        role = str(job.get("role", "the open role"))
+        skills = job.get("skills", []) or []
+        link_limit = 2 if max_words >= 300 else 1
+        filtered_links = links[:link_limit] if links else []
+        link_guidance = (
+            f"Mention up to {link_limit} of these links to the candidate's work: {filtered_links}."
+            if filtered_links
+            else "No links are available, so do not mention any link."
+        )
+
+        if not self.is_demo_mode and self.llm:
+            try:
+                prompt = PromptTemplate.from_template(
+                    """
+                    ### JOB DETAILS:
+                    {job_details}
+
+                    ### CANDIDATE RESUME:
+                    {resume_text}
+
+                    ### CANDIDATE:
+                    - Name: {sender_name}
+                    - Current title: {sender_role}
+
+                    ### RULES:
+                    - Output plain text only. No markdown, no asterisks, no bullet lists, no bold.
+                    - Format: a 'Subject:' line, a blank line, then 3 short paragraphs, then a sign-off with the candidate's name.
+                    - Maximum {max_words} words.
+                    - Open with why this specific role fits, not with "I am writing to apply".
+                    - Pick the two or three experiences from the resume that best match the job's requirements,
+                      and state them concretely.
+                    - Use only facts that appear in the resume. Never invent employers, titles, results, numbers or skills.
+                      If the resume does not show a required skill, do not claim it.
+                    - {link_guidance}
+                    - End with one clear, low-pressure call to action.
+                    - No preamble and no commentary.
+
+                    ### INSTRUCTION:
+                    You are {sender_name}, a candidate interested in the {job_role} role.
+                    Write a short email to the hiring manager. Tone: {tone}.
+
+                    ### EMAIL:
+                    """
+                )
+                res = self._invoke_with_fallback(prompt | self.llm, {
+                    "job_details": str(job),
+                    "job_role": role,
+                    "resume_text": resume_text,
+                    "sender_name": sender_name,
+                    "sender_role": sender_role or "not given",
+                    "tone": tone,
+                    "max_words": max_words,
+                    "link_guidance": link_guidance,
+                })
+                cleaned = _clean_email_markdown(_strip_think(res.content).strip())
+                if not cleaned:
+                    raise ValueError("Model output was empty.")
+                return cleaned
+            except Exception as exc:
+                self.last_error = _clean_error_message(exc)
+                logger.warning("AI application email failed — %s", self.last_error)
+
+        skills_text = ", ".join(str(s) for s in skills[:3]) if skills else "the skills you listed"
+        link_line = f"\nYou can see some of my work here: {filtered_links[0].get('links', '')}\n" if filtered_links else ""
+        title_line = f" I currently work as {sender_role}." if sender_role else ""
+        return (
+            f"Subject: Interested in your {role} role\n\n"
+            f"Dear Hiring Team,\n\n"
+            f"I saw your opening for {role} and wanted to reach out directly.{title_line} "
+            f"The role's focus on {skills_text} lines up closely with the work I have been doing.\n"
+            f"{link_line}\n"
+            f"My resume is attached. Would you be open to a short call this week to see whether I could be a fit?\n\n"
+            f"Best regards,\n{sender_name}"
+        )
+
+    @staticmethod
+    def _fit_to_limit(text: str, limit: int) -> str:
+        """Shorten text to a character limit, cutting at a sentence or word boundary."""
+        text = " ".join(str(text).split())
+        if len(text) <= limit:
+            return text
+        cut = text[:limit]
+        sentence_end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+        if sentence_end >= limit * 0.5:
+            return cut[:sentence_end + 1]
+        return cut[:cut.rfind(" ")].rstrip(",;:") if " " in cut else cut
+
+    def linkedin_messages(
+        self,
+        job: Dict[str, Any],
+        email_text: str,
+        sender_name: str,
+        note_limit: int = 300,
+    ) -> Dict[str, str]:
+        """
+        Turns an email into LinkedIn outreach: a connection note (LinkedIn caps these at
+        300 characters) and a longer InMail. Returns {"note", "inmail_subject", "inmail_body"}.
+        """
+        self.last_error = None
+        self.fallback_notice = None
+        role = str(job.get("role", "the open role"))
+
+        if not self.is_demo_mode and self.llm:
+            try:
+                prompt = PromptTemplate.from_template(
+                    """
+                    ### EMAIL THIS IS BASED ON:
+                    {email_text}
+
+                    ### INSTRUCTION:
+                    You are {sender_name}. Rewrite the email above as two LinkedIn messages about the {job_role} role.
+
+                    1. "note": a connection request note. HARD LIMIT: {note_limit} characters including spaces.
+                       Aim for about {note_target}. One specific reason for connecting and one light ask. No links.
+                    2. "inmail_subject": an InMail subject under 60 characters.
+                    3. "inmail_body": an InMail under 120 words, conversational, with one clear ask.
+
+                    Plain text only: no markdown, no emojis, no hashtags.
+                    Use only facts from the email. Never invent clients, employers, results or numbers.
+
+                    Return ONLY a valid JSON object with the keys "note", "inmail_subject" and "inmail_body".
+                    No markdown ticks, no preamble.
+                    ### VALID JSON:
+                    """
+                )
+                res = self._invoke_with_fallback(prompt | self.llm, {
+                    "email_text": email_text,
+                    "sender_name": sender_name,
+                    "job_role": role,
+                    "note_limit": note_limit,
+                    "note_target": max(50, note_limit - 40),
+                })
+                cleaned = _strip_think(res.content)
+                if not cleaned:
+                    raise ValueError("Model output was empty.")
+                parsed = JsonOutputParser().parse(cleaned)
+                if isinstance(parsed, list):
+                    parsed = parsed[0] if parsed and isinstance(parsed[0], dict) else {}
+                note = self._fit_to_limit(parsed.get("note", ""), note_limit)
+                body = _clean_email_markdown(str(parsed.get("inmail_body", "")))
+                if not note or not body:
+                    raise ValueError("Model returned incomplete LinkedIn messages.")
+                return {
+                    "note": note,
+                    "inmail_subject": " ".join(str(parsed.get("inmail_subject", "")).split()) or f"Your {role} role",
+                    "inmail_body": body,
+                }
+            except Exception as exc:
+                self.last_error = _clean_error_message(exc)
+                logger.warning("AI LinkedIn messages failed — %s", self.last_error)
+
+        name = sender_name or "me"
+        note = self._fit_to_limit(
+            f"Hi, I came across your {role} opening and it lines up closely with my work. "
+            f"I'd be glad to connect and share a couple of relevant details. Thanks, {name}",
+            note_limit,
+        )
+        return {
+            "note": note,
+            "inmail_subject": f"Your {role} role",
+            "inmail_body": (
+                f"Hi,\n\nI noticed you're hiring for {role}. The requirements match work I've done recently, "
+                f"and I think I could be useful.\n\nWould you be open to a quick chat this week?\n\nBest,\n{name}"
+            ),
+        }

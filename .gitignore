@@ -164,3 +164,8 @@ cython_debug/
 # Vectorstore & Local ChromaDB
 vectorstore/
 .streamlit/secrets.toml
+
+# Free-trial usage counters
+usage_data.json
+usage_data.json.tmp
+feedback.jsonl

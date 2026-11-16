@@ -1,14 +1,15 @@
 [server]
+maxUploadSize = 5
 headless = true
 enableCORS = false
 port = 8501
 
 [theme]
 base = "light"
-primaryColor = "#3B82F6"
-backgroundColor = "#EAF2FF"
-secondaryBackgroundColor = "#F3F8FF"
-textColor = "#1E293B"
+primaryColor = "#2563EB"
+backgroundColor = "#F5F7FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0F172A"
 font = "sans serif"
 
 [browser]

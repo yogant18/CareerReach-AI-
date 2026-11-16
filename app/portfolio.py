@@ -1,87 +1,126 @@
 import os
 import uuid
+import weakref
 import chromadb
 import pandas as pd
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
+
+# Upper bound on items in one visitor's portfolio, to protect server memory.
+MAX_ITEMS = 200
+
+COLUMNS = ["Techstack", "Links"]
+
+
+def _drop_collection(client, name: str) -> None:
+    try:
+        client.delete_collection(name)
+    except Exception:
+        pass
 
 
 class Portfolio:
-    def __init__(self, file_path: str = "my_portfolio.csv", vectorstore_path: str = "vectorstore"):
-        self.file_path = file_path
-        self.vectorstore_path = vectorstore_path
-        
-        # Ensure path resolution relative to workspace root if not absolute
-        if not os.path.isabs(self.file_path):
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            candidate = os.path.join(base_dir, self.file_path)
-            if os.path.exists(candidate):
-                self.file_path = candidate
+    """
+    One visitor's private portfolio.
 
-        if not os.path.isabs(self.vectorstore_path):
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            self.vectorstore_path = os.path.join(base_dir, self.vectorstore_path)
+    Each instance owns its own in-memory ChromaDB collection, so items added,
+    uploaded or cleared by one visitor are never visible to another. Nothing is
+    written to disk. The collection is deleted when the instance is garbage
+    collected (i.e. when the visitor's session ends).
 
-        os.makedirs(self.vectorstore_path, exist_ok=True)
-        self.chroma_client = chromadb.PersistentClient(path=self.vectorstore_path)
-        self.collection = self.chroma_client.get_or_create_collection(name="portfolio")
-        
+    ``seed_csv_path`` is an optional read-only starter CSV (Techstack, Links)
+    copied into every new portfolio.
+    """
+
+    def __init__(self, client=None, seed_csv_path: Optional[str] = None):
+        self.client = client if client is not None else chromadb.EphemeralClient()
+        self.seed_csv_path = seed_csv_path
+        self.collection_name = f"portfolio_{uuid.uuid4().hex}"
+        self.collection = self.client.get_or_create_collection(name=self.collection_name)
+        weakref.finalize(self, _drop_collection, self.client, self.collection_name)
         self.load_portfolio()
 
-    def load_portfolio(self, force_reload: bool = False):
-        """Loads data from CSV into ChromaDB collection. Re-syncs if force_reload is True."""
-        if force_reload:
+    # ------------------------------------------------------------------
+    # Loading / resetting
+    # ------------------------------------------------------------------
+    def _seed_dataframe(self) -> pd.DataFrame:
+        if self.seed_csv_path and os.path.exists(self.seed_csv_path):
             try:
-                # Delete existing documents to re-sync
-                all_ids = self.collection.get().get("ids", [])
-                if all_ids:
-                    self.collection.delete(ids=all_ids)
-            except Exception as e:
-                print(f"Error resetting collection: {e}")
+                return pd.read_csv(self.seed_csv_path)
+            except Exception:
+                pass
+        return pd.DataFrame(columns=COLUMNS)
 
-        if (self.collection.count() == 0 or force_reload) and os.path.exists(self.file_path):
-            try:
-                df = pd.read_csv(self.file_path)
-            except pd.errors.EmptyDataError:
-                return
-            self.load_from_dataframe(df, force_reload=False)
+    def has_seed(self) -> bool:
+        return not self._seed_dataframe().empty
+
+    def load_portfolio(self, force_reload: bool = False):
+        """Fills an empty portfolio from the starter CSV; with force_reload, resets to it."""
+        if force_reload:
+            self._delete_all()
+        if self.collection.count() == 0:
+            seed = self._seed_dataframe()
+            if not seed.empty:
+                self.load_from_dataframe(seed, force_reload=False)
+
+    def _delete_all(self) -> None:
+        try:
+            all_ids = self.collection.get().get("ids", [])
+            if all_ids:
+                self.collection.delete(ids=all_ids)
+        except Exception as e:
+            print(f"Error resetting collection: {e}")
 
     def clear_portfolio(self):
-        """Removes every item from ChromaDB and empties the saved CSV (header only)."""
-        all_ids = self.collection.get().get("ids", [])
-        if all_ids:
-            self.collection.delete(ids=all_ids)
-        pd.DataFrame(columns=["Techstack", "Links"]).to_csv(self.file_path, index=False)
+        """Removes every item from this visitor's portfolio."""
+        self._delete_all()
 
     def is_empty(self) -> bool:
         return self.collection.count() == 0
 
-    def load_from_dataframe(self, df: pd.DataFrame, force_reload: bool = True):
-        """Loads entries from an uploaded or custom pandas DataFrame into ChromaDB."""
+    def load_from_dataframe(self, df: pd.DataFrame, force_reload: bool = True) -> int:
+        """
+        Loads rows (Techstack, Links) into this portfolio and returns how many were added.
+        Rows beyond MAX_ITEMS in total are skipped.
+        """
         if force_reload:
-            try:
-                all_ids = self.collection.get().get("ids", [])
-                if all_ids:
-                    self.collection.delete(ids=all_ids)
-            except Exception as e:
-                print(f"Error resetting collection: {e}")
+            self._delete_all()
 
+        room = max(0, MAX_ITEMS - self.collection.count())
+        documents, metadatas, ids = [], [], []
+        seen = set()
         for _, row in df.iterrows():
-            techstack = str(row.get("Techstack", "")).strip()
-            links = str(row.get("Links", "")).strip()
-            if techstack and links:
-                self.collection.add(
-                    documents=[techstack],
-                    metadatas=[{"links": links}],
-                    ids=[str(uuid.uuid4())]
-                )
+            if len(documents) >= room:
+                break
+            raw_tech, raw_links = row.get("Techstack"), row.get("Links")
+            if pd.isna(raw_tech) or pd.isna(raw_links):
+                continue  # blank cell
+            techstack = str(raw_tech).strip()
+            links = str(raw_links).strip()
+            if not techstack or not links:
+                continue
+            key = (techstack.lower(), links)
+            if key in seen:
+                continue
+            seen.add(key)
+            documents.append(techstack)
+            metadatas.append({"links": links})
+            ids.append(str(uuid.uuid4()))
 
+        if documents:
+            self.collection.add(documents=documents, metadatas=metadatas, ids=ids)
+        return len(documents)
+
+    # ------------------------------------------------------------------
+    # Querying
+    # ------------------------------------------------------------------
     def query_links(self, skills: Any, n_results: int = 2, base_portfolio_url: str = "") -> List[Dict[str, str]]:
         """
         Queries ChromaDB for links matching given skills (list of strings or a single query string).
         Returns a list of unique metadata dictionaries containing 'links'.
         If base_portfolio_url is provided, it can be appended or used as custom proof URL.
         """
-        if self.collection.count() == 0:
+        count = self.collection.count()
+        if count == 0:
             if base_portfolio_url and base_portfolio_url.strip():
                 return [{"links": base_portfolio_url.strip()}]
             return []
@@ -101,9 +140,9 @@ class Portfolio:
             return []
 
         try:
-            results = self.collection.query(query_texts=query_texts, n_results=n_results)
+            results = self.collection.query(query_texts=query_texts, n_results=min(n_results, count))
             metadatas = results.get("metadatas", [])
-            
+
             seen_links = set()
             unique_links = []
             for meta_list in metadatas:
@@ -126,7 +165,7 @@ class Portfolio:
 
     def get_all_portfolios(self) -> pd.DataFrame:
         """
-        Retrieves all indexed portfolios directly from ChromaDB.
+        Retrieves all items in this visitor's portfolio.
         Returns an empty DataFrame when nothing is indexed.
         """
         data = self.collection.get()
@@ -141,13 +180,17 @@ class Portfolio:
                 })
             return pd.DataFrame(records)
 
-        return pd.DataFrame(columns=["Techstack", "Links"])
+        return pd.DataFrame(columns=COLUMNS)
+
+    def to_csv(self) -> str:
+        """This visitor's portfolio as CSV text, for download and later re-upload."""
+        return self.get_all_portfolios().to_csv(index=False)
 
     def add_portfolio(self, techstack: str, links: str) -> bool:
         """
-        Adds a new techstack and link entry to both ChromaDB and CSV.
-        Rejects links not starting with http:// or https://.
-        Raises an exception or returns False if CSV saving fails.
+        Adds a techstack and link entry to this visitor's portfolio.
+        Rejects links not starting with http:// or https://, and raises
+        ValueError when the portfolio is full.
         """
         techstack = techstack.strip()
         links = links.strip()
@@ -158,38 +201,20 @@ class Portfolio:
         if not (links.startswith("http://") or links.startswith("https://")):
             raise ValueError("Portfolio link must start with http:// or https://")
 
-        # Avoid duplicate additions if already in CSV
-        if os.path.exists(self.file_path):
-            try:
-                curr_df = pd.read_csv(self.file_path)
-                is_dup = ((curr_df["Techstack"].astype(str).str.strip().str.lower() == techstack.lower()) &
-                          (curr_df["Links"].astype(str).str.strip() == links)).any()
-                if is_dup:
-                    return True
-            except Exception:
-                pass
+        # Skip exact duplicates
+        current = self.get_all_portfolios()
+        if not current.empty:
+            is_dup = ((current["Techstack"].astype(str).str.strip().str.lower() == techstack.lower()) &
+                      (current["Links"].astype(str).str.strip() == links)).any()
+            if is_dup:
+                return True
+
+        if self.collection.count() >= MAX_ITEMS:
+            raise ValueError(f"Portfolio is full ({MAX_ITEMS} items). Remove items before adding more.")
 
         self.collection.add(
             documents=[techstack],
             metadatas=[{"links": links}],
             ids=[str(uuid.uuid4())]
         )
-
-        # Update CSV (item 14: propagate error on failure)
-        try:
-            if os.path.exists(self.file_path):
-                df = pd.read_csv(self.file_path)
-                new_row = pd.DataFrame([{"Techstack": techstack, "Links": links}])
-                df = pd.concat([df, new_row], ignore_index=True)
-                df.to_csv(self.file_path, index=False)
-            else:
-                # File path specified does not exist or cannot be written
-                parent = os.path.dirname(self.file_path)
-                if parent and not os.path.exists(parent):
-                    raise IOError(f"Directory for CSV file does not exist: {parent}")
-                df = pd.DataFrame([{"Techstack": techstack, "Links": links}])
-                df.to_csv(self.file_path, index=False)
-        except Exception as e:
-            raise IOError(f"Added to ChromaDB, but failed to save to CSV file: {e}") from e
-
         return True

@@ -30,7 +30,15 @@ The easiest and fastest way to host CareerReach AI with zero cost and automatic 
    - Add:
      ```toml
      GROQ_API_KEY = "your_groq_api_key_here"
+
+     # Optional free-trial limits (defaults shown)
+     FREE_EMAILS_PER_DAY = 7        # per visitor, rolling 24h from first use (0 = unlimited)
+     FREE_CHATS_PER_DAY = 0         # per visitor chat messages (0 = unlimited)
+     FREE_GLOBAL_DAILY_CAP = 150    # all visitors combined, resets 00:00 UTC (0 = no cap)
+     FREE_TRIAL_MODEL = "openai/gpt-oss-20b"
+     USAGE_SALT = "any-long-random-string"  # keeps hashed visitor IDs stable across restarts
      ```
+   - Visitors get the free trial on your key until a limit is hit, then the app shows when it resets and a short guide to adding their own free Groq key. Visitor IPs are only stored as salted hashes, in `usage_data.json` (git-ignored).
 5. **Click Deploy**:
    - Streamlit Cloud will install dependencies from `requirements.txt` and launch your live URL!
 

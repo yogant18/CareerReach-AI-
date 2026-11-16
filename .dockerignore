@@ -9,3 +9,6 @@ notebooks/
 *.pyd
 .venv
 env/
+usage_data.json
+usage_data.json.tmp
+feedback.jsonl
